@@ -18,8 +18,14 @@ class Coordinate:
         yield self.x
         yield self.y
 
+    def __str__(self):
+        return f"Pos({self.x}, {self.y})"
+
     def __hash__(self):
         return hash(tuple(self))
+
+    def clone(self) -> Coordinate:
+        return Coordinate(self.x, self.y)
 
     def compute_distance(self, coordinate: Coordinate) -> float:
         """Returns the distance from this point to the specified point"""

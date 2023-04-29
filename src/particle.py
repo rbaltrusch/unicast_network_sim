@@ -9,7 +9,7 @@ import copy
 import random
 import time
 from dataclasses import dataclass
-from typing import List, Type, Union
+from typing import List, Tuple, Type, Union
 
 import pygame
 
@@ -22,18 +22,18 @@ class Colour:
     r: int
     g: int
     b: int
-    alpha: int
+    alpha: int = 0
     max_: int = 255
     min_: int = 0
 
-    def __iadd__(self, value):
+    def __iadd__(self, value: float):
         self.r = self.saturate(self.r + value)
         self.g = self.saturate(self.g + value)
         self.b = self.saturate(self.b + value)
         self.alpha = self.saturate(self.alpha + value)
         return self
 
-    def __isub__(self, value):
+    def __isub__(self, value: float):
         self.r = self.saturate(self.r - value)
         self.g = self.saturate(self.g - value)
         self.b = self.saturate(self.b - value)
@@ -41,11 +41,11 @@ class Colour:
         return self
 
     @property
-    def colour(self):
+    def colour(self) -> Tuple[int, int, int, int]:
         return (self.r, self.g, self.b, self.alpha)
 
-    def saturate(self, value):
-        return max(min(value, self.max_), self.min_)
+    def saturate(self, value: float) -> int:
+        return max(min(round(value), self.max_), self.min_)
 
 
 def check_max_size_expired(particle: Particle) -> bool:

@@ -104,12 +104,12 @@ class Mail:
         self.size -= game.mail_size_decay
 
     def render(self, screen: pygame.surface.Surface):
-        # rect = pygame.Rect(
-        #     *tuple(self.position), int(self.size), int(self.size)
-        # )  # type: ignore
-        color = (0, 0, 255)
-        pygame.draw.circle(screen, color, tuple(self.position), self.size)
-        # pygame.draw.rect(screen, color, rect, width=0)
+        rect = pygame.Rect(
+            *tuple(self.position), int(self.size), int(self.size)
+        )  # type: ignore
+        color = (100, 100, 255)
+        # pygame.draw.circle(screen, color, tuple(self.position), self.size)
+        pygame.draw.rect(screen, color, rect, width=0)
 
     @property
     def reached_target(self) -> bool:
@@ -151,14 +151,18 @@ class Node:
                 self.mail = None
 
         if not self.mail and chance(spawn_chance):
-            self.mail = Mail(
-                parent=self,
-                size=random.randint(7, 14),
-                target_node=random.choice(list(x for x in game.nodes if x is not self)),
-            )
+            self.spawn_mail(game)
+
+    def spawn_mail(self, game: Game):
+        self.mail = Mail(
+            parent=self,
+            size=random.randint(7, 14),
+            target_node=random.choice(list(x for x in game.nodes if x is not self)),
+        )
 
     def render(self, screen: pygame.surface.Surface):
         # rect = pygame.Rect(*tuple(self.position), self.size, self.size)  # type: ignore
+        # color = (255, 255, 255)
         color = (255, 255, 255)
         # pygame.draw.rect(screen, color, rect, width=0)
         pygame.draw.circle(screen, color, tuple(self.position), self.size)
@@ -230,7 +234,8 @@ class Player:
         dist = self.target_node.position.compute_distance(self.position)
         if self.speed >= dist:
             self.position = self.target_node.position.clone()
-            self.target_node.get_mail(self)
+            if self.mail is None:
+                self.target_node.get_mail(self)
             return
 
         travel_coord = self._calculate_travel_coordinates(
@@ -255,35 +260,29 @@ class Player:
         return Coordinate(x, y)
 
     def render(self, screen: pygame.surface.Surface):
-        # rect = pygame.Rect(*tuple(self.position), 25, 25)  # type: ignore
         color = (255, 200, 200)
-        pygame.draw.circle(screen, color, tuple(self.position), 20)
-        # pygame.draw.rect(screen, color, rect, width=0)
-
-        # target node
-        # rect = pygame.Rect(*tuple(self.target_node.position), 25, 25)  # type: ignore
-        # color = (200, 255, 200)
-        # pygame.draw.rect(screen, color, rect, width=0)
-
-        # mail target
+        size = 14
+        pygame.draw.circle(screen, color, tuple(self.position), size)
         self._render_mail_target(screen)
+        self._render_connected_node_numbers(screen)
 
-        # connected node numbers
+    def _render_connected_node_numbers(self, screen: pygame.surface.Surface):
         global font
         if font is None:
             return
+        # color = (50, 50, 50)
+        color = (255, 255, 255)
         for i, node in enumerate(self.connected_nodes, 1):
             travel_coord = self._calculate_travel_coordinates(
                 self.speed * 3, self.position, node.position
             )
-            surf = font.render(str(i), True, (255, 255, 255))
+            surf = font.render(str(i), True, color)
             screen.blit(surf, tuple(travel_coord + self.position))
 
     def _render_mail_target(self, screen: pygame.surface.Surface):
         if self.mail is None:
             return
         node_size = self.mail.target_node.size
-        # rect = pygame.Rect(*tuple(self.mail.target_node.position), node_size, node_size)  # type: ignore
         color = MAIL_TARGET_COLOR.colour
         pygame.draw.circle(
             screen, color, tuple(self.mail.target_node.position), node_size, width=0
@@ -315,6 +314,7 @@ class Player:
 class Connection:
     start: Node
     end: Node
+    speed: float
 
     def __hash__(self):
         return hash((self.start, self.end))
@@ -329,10 +329,19 @@ class Connection:
             self.end.connections.remove(self)
 
     def render(self, screen: pygame.surface.Surface):
-        color = (255, 255, 255)
-        pygame.draw.line(
-            screen, color, tuple(self.start.position), tuple(self.end.position), width=1
-        )
+        # color = (200, 200, 200)
+        color = (36, 36, 36)
+        for diff in range(self.width):
+            pygame.draw.aaline(
+                screen,
+                color,
+                tuple(self.start.position + Coordinate(x=diff)),
+                tuple(self.end.position + Coordinate(x=diff)),
+            )
+
+    @property
+    def width(self) -> int:
+        return int(self.speed)
 
 
 @dataclass
@@ -391,8 +400,8 @@ class Game:
 
     @property
     def entities(self) -> Iterable[Entity]:
-        yield from self.nodes
         yield from self.connections
+        yield from self.nodes
         yield self.player
 
     @property
@@ -423,10 +432,13 @@ class Params:
     combo_factor_decrease_delta_per_tick: float
     level: Level
     mail_size_decay: float
+    connection_speed: Stat
 
 
 def init_game(params: Params, seed: Optional[int] = None) -> Game:
     seed = seed or random.randint(0, 100_000_000)
+    random.seed(seed)
+
     nodes = spawn_nodes(params)
     connections = spawn_connections(nodes, params)
     conn_dict = defaultdict(set)
@@ -470,6 +482,9 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
         combo_factor_decrease_per_tick=params.combo_factor_decrease_per_tick,
         combo_factor_decrease_delta_per_tick=params.combo_factor_decrease_delta_per_tick,
     )
+
+    for node in random.choices(nodes, k=min(len(nodes), params.initial_mail)):
+        node.spawn_mail(game)
     return game
 
 
@@ -503,7 +518,9 @@ def spawn_connections(nodes: Iterable[Node], params: Params) -> Iterable[Connect
             target_node = possible_connections.pop(
                 random.choice(list(range(len(possible_connections))))
             )[1]
-            connection = Connection(start=node, end=target_node)
+            connection = Connection(
+                start=node, end=target_node, speed=params.connection_speed()
+            )
             connections.append(connection)
     return connections
 
@@ -562,7 +579,7 @@ class Level(enum.Enum):
 
 @dataclass
 class SaveData:
-    score: int = 0
+    highscore: int = 0
     cleared_levels: List[Level] = field(default_factory=list)
 
     def save(self):
@@ -586,7 +603,7 @@ def load_save_data() -> SaveData:
 
 def save_game_data(game: Game):
     save_data = load_save_data()
-    save_data.score = game.score.points
+    save_data.highscore = max(save_data.highscore, game.score.points)
     if game.won:
         save_data.cleared_levels.append(game.level)
     save_data.save()
@@ -599,7 +616,7 @@ def main():
     # TODO: expose as ini params
     font_size = 25
     gui_font_size = 40
-    full_screen = True
+    full_screen = False
     seed = None
 
     flags = pygame.FULLSCREEN if full_screen else 0
@@ -628,12 +645,13 @@ def main():
         max_connection_length=350,
         player_speed=10,
         mail_spawn_factor=0.005,
-        initial_mail=1,
+        initial_mail=5,
         combo_factor=1,
-        combo_factor_decrease_per_tick=-0.0005,
+        combo_factor_decrease_per_tick=-0.00025,
         combo_factor_decrease_delta_per_tick=-0.000001,
         level=Level.ONE,
-        mail_size_decay=0.01,  # per tick
+        mail_size_decay=0.003,  # per tick
+        connection_speed=Stat(4, 1, 1),
     )
     params = level_one_params
 
@@ -661,6 +679,14 @@ def main():
                         game.player.set_target_connection(3)
                     if event.key == pygame.K_5:
                         game.player.set_target_connection(4)
+                    if event.key == pygame.K_6:
+                        game.player.set_target_connection(5)
+                    if event.key == pygame.K_7:
+                        game.player.set_target_connection(6)
+                    if event.key == pygame.K_8:
+                        game.player.set_target_connection(7)
+                    if event.key == pygame.K_9:
+                        game.player.set_target_connection(8)
                 if game.over and event.key == pygame.K_RETURN:  # restart
                     game = init_game(params)
                     saved = False

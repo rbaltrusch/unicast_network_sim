@@ -11,8 +11,8 @@ from dataclasses import dataclass
 class Coordinate:
     """Coordinate point class"""
 
-    x: float  # pylint: disable=invalid-name
-    y: float  # pylint: disable=invalid-name
+    x: float = 0  # pylint: disable=invalid-name
+    y: float = 0 # pylint: disable=invalid-name
 
     def __iter__(self):
         yield self.x

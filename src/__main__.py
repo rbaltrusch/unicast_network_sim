@@ -32,6 +32,7 @@ from typing import (
 import pygame
 
 from src.coordinate import Coordinate
+from src.particle import CircleParticle, Colour, ParticleSystem, RectParticle
 
 SCREEN_SIZE = Coordinate(800, 600)
 BOARD_SIZE = Coordinate(700, 500)
@@ -39,7 +40,9 @@ MAX_CONNECTIONS = 5
 MAX_THROUGHPUT = 25
 MAX_COMBO = 5
 MIN_COMBO = 0
+MIN_MAIL_SIZE = 5
 MAIL_OFFSET = Coordinate(25, 0)
+MAIL_TARGET_COLOR = Colour(100, 255, 100, 0)
 SAVE_FILEPATH = "mailgame.sav"
 
 font: pygame.font.Font = None  # type: ignore
@@ -98,14 +101,15 @@ class Mail:
     size: float
 
     def update(self, game: Game):
-        pass
+        self.size -= game.mail_size_decay
 
     def render(self, screen: pygame.surface.Surface):
-        rect = pygame.Rect(
-            *tuple(self.position), int(self.size), int(self.size)
-        )  # type: ignore
+        # rect = pygame.Rect(
+        #     *tuple(self.position), int(self.size), int(self.size)
+        # )  # type: ignore
         color = (0, 0, 255)
-        pygame.draw.rect(screen, color, rect, width=0)
+        pygame.draw.circle(screen, color, tuple(self.position), self.size)
+        # pygame.draw.rect(screen, color, rect, width=0)
 
     @property
     def reached_target(self) -> bool:
@@ -117,7 +121,11 @@ class Mail:
 
     @property
     def points(self) -> float:
-        return self.size
+        return self.size * 2
+
+    @property
+    def expired(self) -> bool:
+        return self.size <= MIN_MAIL_SIZE
 
 
 @dataclass
@@ -132,23 +140,28 @@ class Node:
 
     def get_mail(self, player: Player):
         if self.mail and not player.mail:
-            player.mail = self.mail
-            self.mail.parent = player
+            player.take_mail(self)
         self.mail = None
 
     def update(self, game: Game):
         spawn_chance = self.throughput / MAX_THROUGHPUT * game.mail_spawn_factor
+        if self.mail:
+            self.mail.update(game)
+            if self.mail.expired:
+                self.mail = None
+
         if not self.mail and chance(spawn_chance):
             self.mail = Mail(
                 parent=self,
-                size=random.randint(5, 15),
+                size=random.randint(7, 14),
                 target_node=random.choice(list(x for x in game.nodes if x is not self)),
             )
 
     def render(self, screen: pygame.surface.Surface):
-        rect = pygame.Rect(*tuple(self.position), self.size, self.size)  # type: ignore
+        # rect = pygame.Rect(*tuple(self.position), self.size, self.size)  # type: ignore
         color = (255, 255, 255)
-        pygame.draw.rect(screen, color, rect, width=0)
+        # pygame.draw.rect(screen, color, rect, width=0)
+        pygame.draw.circle(screen, color, tuple(self.position), self.size)
         if self.mail:
             self.mail.render(screen)
 
@@ -164,14 +177,48 @@ def calculate_angle(coord1: Coordinate, coord2: Coordinate) -> float:
 
 
 @dataclass
+class Particle:
+    color: Tuple[float, float, float, float]
+
+
+@dataclass
 class Player:
     position: Coordinate
     target_node: Node
     speed: float
     mail: Optional[Mail] = None
 
+    def __post_init__(self):
+        self.target_node_particle_system = ParticleSystem(
+            CircleParticle,
+            position=Coordinate(),
+            colour=MAIL_TARGET_COLOR,
+            spawn_rate=0.3,
+            expired=True,
+        )
+        self.target_node_particle_system.add_kwargs(
+            size_drift=1, width=2, alpha_drift=20
+        )
+
+    def take_mail(self, node: Node):
+        if not node.mail:
+            return
+        self.mail = node.mail
+        self.mail.parent = self
+        self.target_node_particle_system = self.target_node_particle_system.clone(
+            self.mail.target_node.position.clone()
+        )
+        self.target_node_particle_system.add_kwargs(size=self.mail.target_node.size)
+
     def update(self, game: Game):
         self._move()
+        if self.mail:
+            self.mail.update(game)
+            if self.mail.expired:
+                self.mail = None
+            if not self.target_node_particle_system.expired:
+                self.target_node_particle_system.update()
+
         if self.mail and self.mail.reached_target and not game.over:
             game.score.update_score(self.mail)
             self.mail = None
@@ -208,14 +255,15 @@ class Player:
         return Coordinate(x, y)
 
     def render(self, screen: pygame.surface.Surface):
-        rect = pygame.Rect(*tuple(self.position), 25, 25)  # type: ignore
-        color = (255, 0, 0)
-        pygame.draw.rect(screen, color, rect, width=0)
+        # rect = pygame.Rect(*tuple(self.position), 25, 25)  # type: ignore
+        color = (255, 200, 200)
+        pygame.draw.circle(screen, color, tuple(self.position), 20)
+        # pygame.draw.rect(screen, color, rect, width=0)
 
         # target node
-        rect = pygame.Rect(*tuple(self.target_node.position), 25, 25)  # type: ignore
-        color = (200, 255, 200)
-        pygame.draw.rect(screen, color, rect, width=0)
+        # rect = pygame.Rect(*tuple(self.target_node.position), 25, 25)  # type: ignore
+        # color = (200, 255, 200)
+        # pygame.draw.rect(screen, color, rect, width=0)
 
         # mail target
         self._render_mail_target(screen)
@@ -235,9 +283,13 @@ class Player:
         if self.mail is None:
             return
         node_size = self.mail.target_node.size
-        rect = pygame.Rect(*tuple(self.mail.target_node.position), node_size, node_size)  # type: ignore
-        color = (100, 255, 100)
-        pygame.draw.rect(screen, color, rect, width=0)
+        # rect = pygame.Rect(*tuple(self.mail.target_node.position), node_size, node_size)  # type: ignore
+        color = MAIL_TARGET_COLOR.colour
+        pygame.draw.circle(
+            screen, color, tuple(self.mail.target_node.position), node_size, width=0
+        )
+        if not self.target_node_particle_system.expired:
+            self.target_node_particle_system.render(screen)
 
     def set_target_connection(self, index: int):
         if len(self.target_node.connections) <= index:
@@ -310,7 +362,8 @@ class Score:
         global gui_font
         if gui_font is None:
             return
-        text = f"Points: {self.points}     Combo: {self.combo_factor:.2f}"
+        combo = f"{self.combo_factor:.2f}" if self.combo_factor != 0 else 0
+        text = f"Points: {self.points}     Combo: {combo}"
         surf = gui_font.render(text, True, (255, 255, 255))
         screen.blit(surf, (0, 0))
 
@@ -329,6 +382,7 @@ class Game:
     connections: Iterable[Connection]
     player: Player
     mail_spawn_factor: float
+    mail_size_decay: float
     seed: int
     level: Level
     game_over_strategy: Callable[[Game], bool]
@@ -362,13 +416,13 @@ class Params:
     node_offset: Stat
     max_connection_length: float
     player_speed: float
-    mail_size: Stat
     mail_spawn_factor: float
     initial_mail: int
     combo_factor: float
     combo_factor_decrease_per_tick: float
     combo_factor_decrease_delta_per_tick: float
     level: Level
+    mail_size_decay: float
 
 
 def init_game(params: Params, seed: Optional[int] = None) -> Game:
@@ -384,11 +438,14 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
         node.connections = list(conn_dict.get(node, set()))
 
     nodes = [x for x in nodes if x.connections]
+    removed_connections = set()
     for node in nodes:
         for connection in node.connections[MAX_CONNECTIONS:]:
             connection.remove()
+            removed_connections.add(connection)
         node.connections = node.connections[:MAX_CONNECTIONS]
     nodes = [x for x in nodes if x.connections]
+    connections = [x for x in connections if x not in removed_connections]
 
     target_node = min(nodes, key=lambda x: x.position.x)
     player = Player(
@@ -405,6 +462,7 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
         seed=seed,
         level=params.level,
         game_over_strategy=game_over_by_zero_combo,
+        mail_size_decay=params.mail_size_decay,
     )
     game.score = Score(
         game,
@@ -541,7 +599,7 @@ def main():
     # TODO: expose as ini params
     font_size = 25
     gui_font_size = 40
-    full_screen = False
+    full_screen = True
     seed = None
 
     flags = pygame.FULLSCREEN if full_screen else 0
@@ -569,13 +627,13 @@ def main():
         node_offset=Stat(0, 5),
         max_connection_length=350,
         player_speed=10,
-        mail_size=Stat(10, 3, 2),
         mail_spawn_factor=0.005,
         initial_mail=1,
         combo_factor=1,
         combo_factor_decrease_per_tick=-0.0005,
         combo_factor_decrease_delta_per_tick=-0.000001,
         level=Level.ONE,
+        mail_size_decay=0.01,  # per tick
     )
     params = level_one_params
 

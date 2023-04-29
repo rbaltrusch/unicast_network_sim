@@ -24,6 +24,9 @@ class Coordinate:
     def __hash__(self):
         return hash(tuple(self))
 
+    def __add__(self, coord: Coordinate) -> Coordinate:
+        return Coordinate(self.x + coord.x, self.y + coord.y)
+
     def clone(self) -> Coordinate:
         return Coordinate(self.x, self.y)
 

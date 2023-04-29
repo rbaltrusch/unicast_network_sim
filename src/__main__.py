@@ -4,16 +4,30 @@
 # pylint: disable=import-error
 # pylint: disable=global-statement
 # pylint: disable=invalid-name
+# pylint: disable=line-too-long
 
 from __future__ import annotations
 
+import enum
 import itertools
 import logging
 import math
+import pickle
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Tuple,
+    Union,
+)
 
 import pygame
 
@@ -26,6 +40,7 @@ MAX_THROUGHPUT = 25
 MAX_COMBO = 5
 MIN_COMBO = 0
 MAIL_OFFSET = Coordinate(25, 0)
+SAVE_FILEPATH = "mailgame.sav"
 
 font: pygame.font.Font = None  # type: ignore
 gui_font: pygame.font.Font = None  # type: ignore
@@ -157,7 +172,7 @@ class Player:
 
     def update(self, game: Game):
         self._move()
-        if self.mail and self.mail.reached_target:
+        if self.mail and self.mail.reached_target and not game.over:
             game.score.update_score(self.mail)
             self.mail = None
 
@@ -255,6 +270,12 @@ class Connection:
     def update(self, game: Game):
         pass
 
+    def remove(self):
+        if self in self.start.connections:
+            self.start.connections.remove(self)
+        if self in self.end.connections:
+            self.end.connections.remove(self)
+
     def render(self, screen: pygame.surface.Surface):
         color = (255, 255, 255)
         pygame.draw.line(
@@ -266,6 +287,7 @@ class Connection:
 class Score:
     game: Game
     combo_factor_decrease_per_tick: float  # negative
+    combo_factor_decrease_delta_per_tick: float  # negative
     combo_factor: float = 1
     points: int = 0
 
@@ -275,6 +297,7 @@ class Score:
             min_=MIN_COMBO,
             max_=MAX_COMBO,
         )
+        self.combo_factor_decrease_per_tick += self.combo_factor_decrease_delta_per_tick
 
     def update_score(self, mail: Mail):
         points = mail.points
@@ -296,13 +319,20 @@ def game_over_by_zero_combo(game: Game) -> bool:
     return game.score.combo_factor <= 0
 
 
+def endless_game_win_strategy(game: Game) -> bool:
+    return False
+
+
 @dataclass
 class Game:
     nodes: Iterable[Node]
     connections: Iterable[Connection]
     player: Player
     mail_spawn_factor: float
+    seed: int
+    level: Level
     game_over_strategy: Callable[[Game], bool]
+    game_win_strategy: Callable[[Game], bool] = endless_game_win_strategy
     score: Score = None  # type: ignore
 
     @property
@@ -314,6 +344,10 @@ class Game:
     @property
     def over(self) -> bool:
         return self.game_over_strategy(self)
+
+    @property
+    def won(self) -> bool:
+        return self.game_win_strategy(self)
 
     @property
     def gui_entities(self) -> Iterable[Entity]:
@@ -333,9 +367,12 @@ class Params:
     initial_mail: int
     combo_factor: float
     combo_factor_decrease_per_tick: float
+    combo_factor_decrease_delta_per_tick: float
+    level: Level
 
 
-def init_game(params: Params) -> Game:
+def init_game(params: Params, seed: Optional[int] = None) -> Game:
+    seed = seed or random.randint(0, 100_000_000)
     nodes = spawn_nodes(params)
     connections = spawn_connections(nodes, params)
     conn_dict = defaultdict(set)
@@ -348,7 +385,10 @@ def init_game(params: Params) -> Game:
 
     nodes = [x for x in nodes if x.connections]
     for node in nodes:
+        for connection in node.connections[MAX_CONNECTIONS:]:
+            connection.remove()
         node.connections = node.connections[:MAX_CONNECTIONS]
+    nodes = [x for x in nodes if x.connections]
 
     target_node = min(nodes, key=lambda x: x.position.x)
     player = Player(
@@ -362,12 +402,15 @@ def init_game(params: Params) -> Game:
         connections=connections,
         player=player,
         mail_spawn_factor=params.mail_spawn_factor,
+        seed=seed,
+        level=params.level,
         game_over_strategy=game_over_by_zero_combo,
     )
     game.score = Score(
         game,
         combo_factor=params.combo_factor,
         combo_factor_decrease_per_tick=params.combo_factor_decrease_per_tick,
+        combo_factor_decrease_delta_per_tick=params.combo_factor_decrease_delta_per_tick,
     )
     return game
 
@@ -455,18 +498,56 @@ def spawn_nodes(params: Params) -> Iterable[Node]:
     # ]
 
 
+class Level(enum.Enum):
+    ONE = 0
+
+
+@dataclass
+class SaveData:
+    score: int = 0
+    cleared_levels: List[Level] = field(default_factory=list)
+
+    def save(self):
+        try:
+            with open(SAVE_FILEPATH, "wb") as file:
+                pickle.dump(self.__dict__, file)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.exception("Could not save data due to exception %s", str(exc))
+
+
+def load_save_data() -> SaveData:
+    try:
+        with open(SAVE_FILEPATH, "rb") as file:
+            dict_: Dict[str, Any] = pickle.load(file)
+        save_data = SaveData()
+        save_data.__dict__ = dict_
+        return save_data
+    except Exception:  # pylint: disable=broad-except
+        return SaveData()
+
+
+def save_game_data(game: Game):
+    save_data = load_save_data()
+    save_data.score = game.score.points
+    if game.won:
+        save_data.cleared_levels.append(game.level)
+    save_data.save()
+
+
 def main():
     pygame.init()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
-    print([calculate_angle(Coordinate(0, 0), Coordinate(-10, -10))])
-    screen = pygame.display.set_mode(tuple(SCREEN_SIZE))
-    board = pygame.Surface(tuple(BOARD_SIZE))
-    clock = pygame.time.Clock()
-
     # TODO: expose as ini params
     font_size = 25
     gui_font_size = 40
+    full_screen = False
+    seed = None
+
+    flags = pygame.FULLSCREEN if full_screen else 0
+    screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=flags)
+    board = pygame.Surface(tuple(BOARD_SIZE))
+    clock = pygame.time.Clock()
 
     global font, gui_font
     try:
@@ -492,18 +573,25 @@ def main():
         mail_spawn_factor=0.005,
         initial_mail=1,
         combo_factor=1,
-        combo_factor_decrease_per_tick=-0.001,
+        combo_factor_decrease_per_tick=-0.0005,
+        combo_factor_decrease_delta_per_tick=-0.000001,
+        level=Level.ONE,
     )
     params = level_one_params
 
-    game = init_game(params)
+    print(load_save_data())
+
+    game = init_game(params, seed)
     in_game = True
     terminated = False
+    saved = False
     while not terminated:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 terminated = True
             if event.type == pygame.KEYDOWN and in_game:
+                if event.key == pygame.K_ESCAPE:
+                    terminated = True
                 if game.player.reached_target and not game.over:
                     if event.key == pygame.K_1:
                         game.player.set_target_connection(0)
@@ -517,6 +605,7 @@ def main():
                         game.player.set_target_connection(4)
                 if game.over and event.key == pygame.K_RETURN:  # restart
                     game = init_game(params)
+                    saved = False
 
         for entity in itertools.chain(game.entities, game.gui_entities):
             entity.update(game)
@@ -529,6 +618,10 @@ def main():
             entity.render(screen)
         screen.blit(board, (100, 100))
         if game.over:
+            if not saved:
+                save_game_data(game)
+                saved = True
+
             surf = gui_font.render(
                 "Game Over! Press ENTER to restart.", True, (255, 255, 255)
             )

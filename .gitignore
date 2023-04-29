@@ -1,0 +1,18 @@
+# python
+**/__pycache__/
+**/.pylint.d/
+**/.coverage
+tests/reports/
+tests/htmlcov/
+**/*.egg-info
+
+# pyinstaller
+*.spec
+build
+dist
+
+# work files
+.vscode/
+
+# cProfile output file
+o

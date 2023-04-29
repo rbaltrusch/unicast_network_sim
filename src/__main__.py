@@ -193,6 +193,7 @@ class Player:
     mail: Optional[Mail] = None
 
     def __post_init__(self):
+        self.origin_node: Node = self.target_node
         self.target_node_particle_system = ParticleSystem(
             CircleParticle,
             position=Coordinate(),
@@ -231,15 +232,21 @@ class Player:
         if self.reached_target:
             return
 
+        speed = (
+            self.speed
+            * min(self.origin_node.throughput, self.target_node.throughput)
+            / 2
+        )
         dist = self.target_node.position.compute_distance(self.position)
-        if self.speed >= dist:
+        if speed >= dist:
             self.position = self.target_node.position.clone()
+            self.origin_node = self.target_node
             if self.mail is None:
                 self.target_node.get_mail(self)
             return
 
         travel_coord = self._calculate_travel_coordinates(
-            self.speed, self.position, self.target_node.position
+            speed, self.position, self.target_node.position
         )
         self.position.x += travel_coord.x
         self.position.y += travel_coord.y
@@ -274,7 +281,7 @@ class Player:
         color = (255, 255, 255)
         for i, node in enumerate(self.connected_nodes, 1):
             travel_coord = self._calculate_travel_coordinates(
-                self.speed * 3, self.position, node.position
+                self.speed * 3.5, self.position, node.position
             )
             surf = font.render(str(i), True, color)
             screen.blit(surf, tuple(travel_coord + self.position))
@@ -282,7 +289,7 @@ class Player:
     def _render_mail_target(self, screen: pygame.surface.Surface):
         if self.mail is None:
             return
-        node_size = self.mail.target_node.size
+        node_size = max(self.mail.target_node.size, 7)
         color = MAIL_TARGET_COLOR.colour
         pygame.draw.circle(
             screen, color, tuple(self.mail.target_node.position), node_size, width=0
@@ -314,7 +321,6 @@ class Player:
 class Connection:
     start: Node
     end: Node
-    speed: float
 
     def __hash__(self):
         return hash((self.start, self.end))
@@ -338,6 +344,10 @@ class Connection:
                 tuple(self.start.position + Coordinate(x=diff)),
                 tuple(self.end.position + Coordinate(x=diff)),
             )
+
+    @property
+    def speed(self) -> float:
+        return min(self.start.throughput, self.end.throughput)
 
     @property
     def width(self) -> int:
@@ -432,7 +442,6 @@ class Params:
     combo_factor_decrease_delta_per_tick: float
     level: Level
     mail_size_decay: float
-    connection_speed: Stat
 
 
 def init_game(params: Params, seed: Optional[int] = None) -> Game:
@@ -518,15 +527,13 @@ def spawn_connections(nodes: Iterable[Node], params: Params) -> Iterable[Connect
             target_node = possible_connections.pop(
                 random.choice(list(range(len(possible_connections))))
             )[1]
-            connection = Connection(
-                start=node, end=target_node, speed=params.connection_speed()
-            )
+            connection = Connection(start=node, end=target_node)
             connections.append(connection)
     return connections
 
 
 def spawn_nodes(params: Params) -> Iterable[Node]:
-    screen_offset = 20
+    screen_offset = 50
 
     min_step = 100
     grid = list(
@@ -616,7 +623,7 @@ def main():
     # TODO: expose as ini params
     font_size = 25
     gui_font_size = 40
-    full_screen = False
+    full_screen = True
     seed = None
 
     flags = pygame.FULLSCREEN if full_screen else 0
@@ -639,7 +646,7 @@ def main():
 
     level_one_params = Params(
         amount=Stat(30, 3, 25),
-        throughput=Stat(10, 0, 10),
+        throughput=Stat(4, 1, 1),
         connections_per_node=Stat(1, 1, 1),
         node_offset=Stat(0, 5),
         max_connection_length=350,
@@ -651,7 +658,6 @@ def main():
         combo_factor_decrease_delta_per_tick=-0.000001,
         level=Level.ONE,
         mail_size_decay=0.003,  # per tick
-        connection_speed=Stat(4, 1, 1),
     )
     params = level_one_params
 

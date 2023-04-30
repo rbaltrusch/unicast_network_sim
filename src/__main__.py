@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import enum
 import itertools
+import json
 import logging
 import math
 import os
@@ -24,15 +25,20 @@ import pygame
 from pygame import gfxdraw
 
 from src.coordinate import Coordinate
-from src.particle import CircleParticle, Colour, ParticleSystem
+from src.particle import (CircleParticle, Colour, ParticleSystem,
+                          check_min_size_expired)
 
+MIN_NODE_SPAWN_STEP = 100
+BOARD_SCREEN_OFFSET = 40
+
+PLAYER_COLOR = (255, 51, 153)
 RETRO_GREEN = (51, 255, 51)
 SCREEN_SIZE = Coordinate(800, 600)
 BOARD_SIZE = Coordinate(600, 500)
 GUI_HEIGHT = SCREEN_SIZE.y - BOARD_SIZE.y
 MAX_CONNECTIONS = 5
 MAX_THROUGHPUT = 25
-MAX_COMBO = 5
+MAX_COMBO = 2
 MIN_COMBO = 0
 MIN_MAIL_SIZE = 5
 MAIL_OFFSET = Coordinate(10, -5)
@@ -95,7 +101,8 @@ class Mail:
     size: float
 
     def update(self, game: Game):
-        self.size -= game.mail_size_decay
+        factor = 0.4 if self.parent is game.player else 1
+        self.size -= game.mail_size_decay * factor
 
     def render(self, screen: pygame.surface.Surface):
         rect = pygame.Rect(
@@ -198,6 +205,8 @@ class Animation:
         self.start_tick = None
         self.current_tick = 0
         self.ongoing = True
+        self._iterator = None
+        self.current_value = None
 
     def update(self, game: Game):
         if not self.ongoing:
@@ -231,6 +240,8 @@ class Player:
     target_node: Node
     speed: float
     mail: Optional[Mail] = None
+    color = PLAYER_COLOR
+    size = 10
 
     def __post_init__(self):
         self.target_node.occupied = True
@@ -248,6 +259,10 @@ class Player:
         self.target_animation = Animation(
             [0, 1, 1, 2, 3, 3, 3, 2, 1, 0, -1, -1, 0], tick=2
         )
+        self.path_particle_system = ParticleSystem(CircleParticle, position=Coordinate(), colour=Colour(*self.color), spawn_rate=0.05, expired=True)
+        self.path_particle_system.add_kwargs(size_drift=-0.2, size=round(self.size * 0.7), expiration_algorithm=check_min_size_expired)
+        self.path_particle_systems: List[ParticleSystem] = []
+
 
     def take_mail(self, node: Node):
         if not node.mail:
@@ -261,6 +276,10 @@ class Player:
         self.target_node_particle_system.add_kwargs(size=self.mail.target_node.size)
 
     def update(self, game: Game):
+        for particle_system in self.path_particle_systems:
+            particle_system.position = self.position.clone()
+            particle_system.update()
+
         self._move()
         if self.mail:
             self.mail.update(game)
@@ -278,6 +297,7 @@ class Player:
 
     def _move(self):
         if self.reached_target:
+            self._expire_path_particle_systems()
             return
 
         self.origin_node.occupied = False
@@ -293,6 +313,7 @@ class Player:
             self.target_node.occupied = True
             if self.mail is None:
                 self.target_node.get_mail(self)
+            self._expire_path_particle_systems()
             return
 
         travel_coord = self._calculate_travel_coordinates(
@@ -316,14 +337,23 @@ class Player:
         )
         return Coordinate(x, y)
 
+    def _expire_path_particle_systems(self):
+        for particle_system in self.path_particle_systems:
+            particle_system.expired = True
+
     def render(self, screen: pygame.surface.Surface):
-        color = (255, 51, 153) #color = (255, 124, 190) #(255, 200, 200)
-        size = 14
         # pygame.draw.circle(screen, color, tuple(self.position), size)
-        gfxdraw.aacircle(screen, int(self.position.x), int(self.position.y), size, color)
-        gfxdraw.filled_circle(screen, int(self.position.x), int(self.position.y), size, color)
+        gfxdraw.aacircle(screen, int(self.position.x), int(self.position.y), self.size, self.color)
+        gfxdraw.filled_circle(screen, int(self.position.x), int(self.position.y), self.size, self.color)
         self._render_mail_target(screen)
         self._render_connected_node_numbers(screen)
+        self._render_particle_systems(screen)
+
+    def _render_particle_systems(self, screen: pygame.surface.Surface):
+        for particle_system in self.path_particle_systems:
+            particle_system.render(screen)
+        self.path_particle_systems = [x for x in self.path_particle_systems if not x.fully_expired]
+
 
     def _render_connected_node_numbers(self, screen: pygame.surface.Surface):
         global font
@@ -354,6 +384,9 @@ class Player:
         if len(self.target_node.connections) <= index:
             return
         self.target_node = self.connected_nodes[index]
+
+        new_particle_system = self.path_particle_system.clone(position=self.position.clone())
+        self.path_particle_systems.append(new_particle_system)
 
     @property
     def connected_nodes(self) -> List[Node]:
@@ -416,32 +449,44 @@ class Score:
     combo_factor: float = 1
     points: int = 0
 
+    def __post_init__(self):
+        self.max_combo_animation = Animation(values=[0, 1, 1, 2, 2, 2, 2, 1, 1, 0, -1, -1, -2, -2, -2, -2, -1, -1] * 3 + [0], tick=3)
+
     def update(self, game: Game):
         self.combo_factor = saturate(
             self.combo_factor + self.combo_factor_decrease_per_tick,
             min_=MIN_COMBO,
-            max_=MAX_COMBO,
+            max_=MAX_COMBO + 1, # give some leeway to show MAX COMBO text
         )
         self.combo_factor_decrease_per_tick += self.combo_factor_decrease_delta_per_tick
+        self.max_combo_animation.update(game)
 
     def update_score(self, mail: Mail):
         points = mail.points
-        self.points += round(points * self.combo_factor)
-        self.combo_factor = saturate(
-            self.combo_factor + 1, min_=MIN_COMBO, max_=MAX_COMBO
+        self.points += round(points * min(self.combo_factor, MAX_COMBO))
+        new_combo_factor = saturate(
+            self.combo_factor + 1, min_=MIN_COMBO, max_=MAX_COMBO + 1
         )
+        if new_combo_factor >= MAX_COMBO and self.combo_factor < MAX_COMBO:
+            self._reach_max_combo()
+        self.combo_factor = new_combo_factor
+
+    def _reach_max_combo(self):
+        self.max_combo_animation.start()
 
     def render(self, screen: pygame.surface.Surface):
         global gui_font
         if gui_font is None:
             return
         combo = f"{self.combo_factor:.2f}" if self.combo_factor != 0 else 0
-        text = f"Points: {self.points}     Combo: {combo}"
+        combo_text = f"Combo: {combo}" if self.combo_factor < MAX_COMBO else "MAX COMBO"
+        text = f"Points: {self.points}     {combo_text}"
         surf = gui_font.render(text, True, RETRO_GREEN)
         *_, width, height = surf.get_rect()
         x = int((SCREEN_SIZE.x - width) / 2)
         y = int((GUI_HEIGHT - height) / 2)
-        screen.blit(surf, (x, y))
+        y_offs = self.max_combo_animation.current_value or 0
+        screen.blit(surf, (x, y + y_offs))
 
 
 def game_over_by_zero_combo(game: Game) -> bool:
@@ -470,6 +515,7 @@ class Game:
 
     def update(self):
         self.tick += 1
+        self.score.update(self)
 
     @property
     def entities(self) -> Iterable[Entity]:
@@ -510,8 +556,10 @@ class Params:
 def init_game(params: Params, seed: Optional[int] = None) -> Game:
     seed = seed or random.randint(0, 100_000_000)
     random.seed(seed)
+    logging.info("Seed: %s", seed)
 
     Connection.color = RETRO_GREEN
+    Player.color = PLAYER_COLOR
 
     nodes = spawn_nodes(params)
     connections = spawn_connections(nodes, params)
@@ -600,13 +648,10 @@ def spawn_connections(nodes: Iterable[Node], params: Params) -> Iterable[Connect
 
 
 def spawn_nodes(params: Params) -> Iterable[Node]:
-    screen_offset = 50
-
-    min_step = 100
     grid = list(
         itertools.product(
-            range(screen_offset, int(BOARD_SIZE.x), min_step),
-            range(screen_offset, int(BOARD_SIZE.y), min_step),
+            range(BOARD_SCREEN_OFFSET, int(BOARD_SIZE.x), MIN_NODE_SPAWN_STEP),
+            range(BOARD_SCREEN_OFFSET, int(BOARD_SIZE.y), MIN_NODE_SPAWN_STEP),
         )
     )
 
@@ -710,15 +755,42 @@ def init_gui_font(font_size: int) -> Optional[pygame.font.Font]:
     except Exception as exc:  # pylint: disable=broad-except
         logging.exception("Could not init gui font due to exception %s", str(exc))
 
+@dataclass
+class Config:
+    font_size: int = 25
+    gui_font_size: int = 40
+    full_screen: bool = False
+    seed: Optional[int] = None
+    muted: bool = False
+    log_enabled: bool = True
+
+def read_config_json() -> Config:
+    try:
+        with open("config.json", "r", encoding="utf-8") as file:
+            dict_ = json.load(file)
+        config = Config()
+        config.__dict__ = dict_
+        return config
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.exception("Could not read config json due to exception %s", str(exc))
+        return Config()
+
+
 def main():
     pygame.init()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
-    # TODO: expose as ini params
-    font_size = 25
-    gui_font_size = 40
-    full_screen = True
-    seed = None
+    config = read_config_json()
+    log_enabled = config.log_enabled
+    font_size = config.font_size
+    gui_font_size = config.gui_font_size
+    full_screen = config.full_screen
+    seed = config.seed
+    muted = config.muted
+
+    handlers = [logging.NullHandler()] if not log_enabled else [logging.FileHandler("mailgame.log")]
+    logging.basicConfig(handlers=handlers, level=logging.INFO, format="%(asctime)s %(message)s")
+
+
 
     flags = pygame.FULLSCREEN if full_screen else 0
     screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=flags)
@@ -740,14 +812,13 @@ def main():
         initial_mail=5,
         combo_factor=1,
         combo_factor_decrease_per_tick=-0.00025,
-        combo_factor_decrease_delta_per_tick=-0.000001,
-        # combo_factor_decrease_delta_per_tick=-0.01,
+        combo_factor_decrease_delta_per_tick=-0.0000001,
         level=Level.ONE,
         mail_size_decay=0.003,  # per tick
     )
     params = level_one_params
 
-    print(load_save_data())
+    logging.info("Save data: %s", load_save_data())
 
     game = init_game(params, seed)
     in_game = True
@@ -786,6 +857,8 @@ def main():
                 if event.key == pygame.K_r or event.key == pygame.K_RETURN:  # restart
                     game = init_game(params)
                     saved = False
+                if event.key == pygame.K_m:
+                    muted = not muted
 
         for entity in itertools.chain(game.entities, game.gui_entities):
             entity.update(game)
@@ -793,6 +866,7 @@ def main():
 
         if game.over:
             Connection.color = (17, 150, 17, 90) # type: ignore
+            Player.color = (178, 71, 125) # type: ignore
         screen.fill((12, 12, 12))
         #board.fill((36, 36, 36))
         board.fill((12, 12, 12))

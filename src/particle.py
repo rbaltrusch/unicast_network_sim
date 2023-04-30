@@ -8,8 +8,8 @@ from __future__ import annotations
 import copy
 import random
 import time
-from dataclasses import dataclass
-from typing import List, Tuple, Type, Union
+from dataclasses import dataclass, field
+from typing import Callable, List, Tuple, Type, Union
 
 import pygame
 
@@ -51,6 +51,8 @@ class Colour:
 def check_max_size_expired(particle: Particle) -> bool:
     return particle.size >= particle.max_size
 
+def check_min_size_expired(particle: Particle) -> bool:
+    return particle.size <= particle.min_size
 
 @dataclass
 class RectParticle:
@@ -68,7 +70,7 @@ class RectParticle:
     max_size: int = 255
     x_drift: int = 0
     y_drift: int = 0
-    expiration_algorithm = check_max_size_expired
+    expiration_algorithm: Callable[[Particle], bool] = field(default=check_max_size_expired)
 
     def __post_init__(self):
         self.position.x += random.randint(-self.spread, self.spread)
@@ -77,7 +79,7 @@ class RectParticle:
         self.expired = False
 
     def update(self):
-        if self.expiration_algorithm():
+        if self.expiration_algorithm(self):
             self.expired = True
             return
 
@@ -144,6 +146,9 @@ class ParticleSystem:
         self.kwargs.update(kwargs)
 
     def render(self, screen: pygame.surface.Surface):
+        if self.fully_expired:
+            return
+
         for particle in self.particles:
             particle.render(screen)
 
@@ -156,6 +161,9 @@ class ParticleSystem:
         return copied
 
     def update(self):
+        if self.fully_expired:
+            return
+
         self.colour += self.colour_drift
         for particle in self.particles:
             particle.update()
@@ -163,7 +171,7 @@ class ParticleSystem:
         if time.time() - self.start_time > self.lifetime:
             self.expired = True
 
-        if time.time() - self.spawn_time > self.spawn_rate:
+        if time.time() - self.spawn_time > self.spawn_rate and not self.expired:
             self.spawn_time = time.time()
             self.particles.append(self.create_new_particle())
 
@@ -174,3 +182,7 @@ class ParticleSystem:
         if new_particle.expired:
             self.expired = True
         return new_particle
+
+    @property
+    def fully_expired(self) -> bool:
+        return self.expired and all(x.expired for x in self.particles)

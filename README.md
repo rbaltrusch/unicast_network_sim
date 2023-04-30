@@ -4,6 +4,11 @@ This is my entry for the Ludum Dare 53 game jam, to be completed in 72h as an en
 
 ![Gif of gameplay](src/media/gameplay.gif)
 
+## Links
+
+[game on itch.io](https://richardbaltrusch.itch.io/unicast-network-simulator)
+[ludum dare 53 entry](https://ldjam.com/events/ludum-dare/53/$361412)
+
 ## Run from source
 
 Install dependencies:

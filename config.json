@@ -4,5 +4,6 @@
     "full_screen": false,
     "seed": null,
     "muted": false,
-    "log_enabled": true
+    "log_enabled": true,
+    "music_volume": 1
 }

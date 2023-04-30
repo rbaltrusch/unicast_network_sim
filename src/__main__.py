@@ -39,13 +39,14 @@ BOARD_SIZE = Coordinate(600, 500)
 GUI_HEIGHT = SCREEN_SIZE.y - BOARD_SIZE.y - 50
 MAX_CONNECTIONS = 5
 MAX_THROUGHPUT = 25
-MAX_COMBO = 2
+MAX_COMBO = 5
 MIN_COMBO = 0
 MIN_MAIL_SIZE = 5
 MAIL_OFFSET = Coordinate(10, -5)
 MAIL_TARGET_COLOR = Colour(255, 153, 51, 255)
 SAVE_FILEPATH = "mailgame.sav"
 FPS = 50
+VOLUME_SCALING = 2
 
 font: Optional[pygame.font.Font] = None
 gui_font: Optional[pygame.font.Font] = None
@@ -262,7 +263,13 @@ class Player:
     position: Coordinate
     target_node: Node
     speed: float
+    move_sound: SoundCollection
+    mail_deliver_sound: SoundCollection
+    mail_expiry_sound: SoundCollection
+    target_sound: SoundCollection
+
     mail: Optional[Mail] = None
+
     color = PLAYER_COLOR
     size = 10
 
@@ -299,6 +306,7 @@ class Player:
     def take_mail(self, node: Node):
         if not node.mail:
             return
+        self.target_sound.play()
         self.target_animation.start()
         self.mail = node.mail
         self.mail.parent = self
@@ -317,6 +325,7 @@ class Player:
             self.mail.update(game)
             self.target_animation.update(game)
             if self.mail.expired:
+                self.mail_expiry_sound.play()
                 self.mail = None
             if not self.target_node_particle_system.expired:
                 self.target_node_particle_system.update()
@@ -324,6 +333,7 @@ class Player:
         if self.mail and self.mail.reached_target and not game.over:
             game.score.update_score(self.mail)
             self.mail = None
+            self.mail_deliver_sound.play()
             if self.target_node.mail:
                 self.target_node.get_mail(self)
 
@@ -421,6 +431,7 @@ class Player:
         if len(self.target_node.connections) <= index:
             return
         self.target_node = self.connected_nodes[index]
+        self.move_sound.play()
 
         new_particle_system = self.path_particle_system.clone(
             position=self.position.clone()
@@ -485,6 +496,7 @@ class Score:
     game: Game
     combo_factor_decrease_per_tick: float  # negative
     combo_factor_decrease_delta_per_tick: float  # negative
+    max_combo_sound: SoundCollection
     combo_factor: float = 1
     points: int = 0
 
@@ -563,6 +575,7 @@ class Score:
         self.combo_factor = new_combo_factor
 
     def _reach_max_combo(self):
+        self.max_combo_sound.play()
         self.max_combo_animation.start()
 
     def render(self, screen: pygame.surface.Surface):
@@ -709,10 +722,17 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
     connections = [x for x in connections if x not in removed_connections]
 
     target_node = min(nodes, key=lambda x: x.position.x)
+
+    sound_folder = os.path.join(os.path.dirname(__file__), "media")
+    fullpath = lambda x: os.path.join(sound_folder, x)
     player = Player(
         position=target_node.position.clone(),
         target_node=target_node,
         speed=params.player_speed,
+        move_sound=SoundCollection([Sound(fullpath(f"move{i}.wav"), volume=0.1) for i in range(3, 9)]),
+        mail_deliver_sound=SoundCollection([Sound(fullpath(f"coin{i}.wav"), volume=0.4) for i in range(1, 8)]),
+        mail_expiry_sound=SoundCollection([Sound(fullpath("explode.wav"), volume=0.3)]),
+        target_sound=SoundCollection([Sound(fullpath(f"target{i}.wav"), volume=0.15) for i in range(1, 5) ])
     )
 
     game = Game(
@@ -727,6 +747,7 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
     )
     game.score = Score(
         game,
+        max_combo_sound=SoundCollection([Sound(fullpath("maxcombo.wav"), volume=0.3)]),
         combo_factor=params.combo_factor,
         combo_factor_decrease_per_tick=params.combo_factor_decrease_per_tick,
         combo_factor_decrease_delta_per_tick=params.combo_factor_decrease_delta_per_tick,
@@ -891,6 +912,7 @@ class Config:
     seed: Optional[int] = None
     muted: bool = False
     log_enabled: bool = True
+    volume: float = 1
 
 
 def read_config_json() -> Config:
@@ -898,7 +920,7 @@ def read_config_json() -> Config:
         with open("config.json", "r", encoding="utf-8") as file:
             dict_ = json.load(file)
         config = Config()
-        config.__dict__ = dict_
+        config.__dict__.update(dict_)
         return config
     except Exception as exc:  # pylint: disable=broad-except
         logging.exception("Could not read config json due to exception %s", str(exc))
@@ -930,6 +952,71 @@ def load_icon():
         logging.exception("Could not set taskbar icon due to exception %s", str(exc))
 
 
+def load_music(volume: float):
+    path = os.path.join(os.path.dirname(__file__), "media", "unicast3.wav")
+    try:
+        pygame.mixer.init()
+        pygame.mixer.music.set_volume(volume)
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.play(loops=-1, fade_ms=10)
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.exception("Could not load music due to exception %s", str(exc))
+
+
+@dataclass
+class Sound:
+    filepath: str
+    volume: float = 1
+
+    def __post_init__(self):
+        self.sound: Optional[pygame.mixer.Sound] = self.load_sound()
+
+    def load_sound(self) -> Optional[pygame.mixer.Sound]:
+        try:
+            sound = pygame.mixer.Sound(self.filepath)
+            sound.set_volume(self.volume)
+            return sound
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.exception(
+                "Could not load sound %s due to exception %s", str(self), str(exc)
+            )
+
+    def play(self):
+        if not self.sound:
+            return
+        self.sound.play()
+
+    @property
+    def playable(self) -> bool:
+        return self.sound is not None
+
+
+@dataclass
+class SoundCollection:
+    sounds: List[Sound]
+    enabled = True
+
+
+    def play(self):
+        if not self.enabled:
+            return
+
+        sounds = [x for x in self.sounds if x.playable]
+        if not sounds:
+            return
+        sound = random.choice(sounds)
+        sound.play()
+
+def set_volume(muted: bool, volume: float):
+    SoundCollection.enabled = not muted
+    volume = 0 if muted else volume
+    try:
+        pygame.mixer.music.set_volume(volume * VOLUME_SCALING)
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.exception(
+            "Could not set mixer volume due to exception %s", str(exc)
+        )
+
 def main():
     pygame.init()
     pygame.display.set_caption(GAME_TITLE)
@@ -942,6 +1029,9 @@ def main():
     full_screen = config.full_screen
     seed = config.seed
     muted = config.muted
+    volume = config.volume
+
+    load_music(volume)
 
     handlers = (
         [logging.NullHandler()]
@@ -971,10 +1061,11 @@ def main():
         mail_spawn_factor=0.005,
         initial_mail=5,
         combo_factor=1,
-        combo_factor_decrease_per_tick=-0.00025,
+        combo_factor_decrease_per_tick=-0.0001,
         combo_factor_decrease_delta_per_tick=-0.0000001,
         level=Level.ONE,
         mail_size_decay=0.003,  # per tick
+        # mail_size_decay=0.03,  # per tick
     )
     params = level_one_params
 
@@ -1020,6 +1111,7 @@ def main():
                 if event.key == pygame.K_m:
                     muted = not muted
 
+        set_volume(muted, volume)
         for entity in itertools.chain(game.entities, game.gui_entities):
             entity.update(game)
         game.update()

@@ -44,6 +44,7 @@ MIN_MAIL_SIZE = 5
 MAIL_OFFSET = Coordinate(10, -5)
 MAIL_TARGET_COLOR = Colour(255, 153, 51, 255)
 SAVE_FILEPATH = "mailgame.sav"
+FPS = 50
 
 font: Optional[pygame.font.Font] = None
 gui_font: Optional[pygame.font.Font] = None
@@ -100,9 +101,12 @@ class Mail:
     target_node: Node
     size: float
 
+    def __post_init__(self):
+        self.previous_decay: float = 0 # positive
+
     def update(self, game: Game):
-        factor = 0.4 if self.parent is game.player else 1
-        self.size -= game.mail_size_decay * factor
+        self.previous_decay = game.mail_size_decay * self.decay_factor
+        self.size -= self.previous_decay
 
     def render(self, screen: pygame.surface.Surface):
         rect = pygame.Rect(
@@ -129,6 +133,15 @@ class Mail:
     def expired(self) -> bool:
         return self.size <= MIN_MAIL_SIZE
 
+    @property
+    def decay_factor(self) -> float:
+        return 0.4 if isinstance(self.parent, Player) else 1
+
+    @property
+    def ticks_until_expiry(self) -> float:
+        if self.expired:
+            return 0
+        return (self.size - MIN_MAIL_SIZE) / self.previous_decay if self.previous_decay != 0 else math.inf
 
 @dataclass
 class Node:
@@ -451,6 +464,9 @@ class Score:
 
     def __post_init__(self):
         self.max_combo_animation = Animation(values=[0, 1, 1, 2, 2, 2, 2, 1, 1, 0, -1, -1, -2, -2, -2, -2, -1, -1] * 3 + [0], tick=3)
+        self.expired_mail_animation = Animation(values=[1, 1.05, 1.1, 1.1, 1.05, 1, 0.9, 0.95, 0.8, 0.7, 0.6, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0], tick=4)
+        self.expired_mail_offset_animation = Animation(values=[Coordinate(0, 0), Coordinate(3, -10), Coordinate(6, -20), Coordinate(9, -20), Coordinate(12, 0), Coordinate(15, 35), Coordinate(20, 70), Coordinate(25, 105)], tick=5)
+        self.mail: Optional[Mail] = None
 
     def update(self, game: Game):
         self.combo_factor = saturate(
@@ -460,6 +476,15 @@ class Score:
         )
         self.combo_factor_decrease_per_tick += self.combo_factor_decrease_delta_per_tick
         self.max_combo_animation.update(game)
+        self.expired_mail_animation.update(game)
+        self.expired_mail_offset_animation.update(game)
+        self.set_mail(game.player.mail)
+
+    def set_mail(self, mail: Optional[Mail]):
+        if mail is None and self.mail is not None and not self.mail.reached_target:
+            self.expired_mail_animation.start()
+            self.expired_mail_offset_animation.start()
+        self.mail = mail
 
     def update_score(self, mail: Mail):
         points = mail.points
@@ -475,18 +500,46 @@ class Score:
         self.max_combo_animation.start()
 
     def render(self, screen: pygame.surface.Surface):
+        self._render_score(screen)
+        self._render_remaining_time(screen)
+
+    def _render_score(self, screen: pygame.surface.Surface):
         global gui_font
         if gui_font is None:
             return
         combo = f"{self.combo_factor:.2f}" if self.combo_factor != 0 else 0
         combo_text = f"Combo: {combo}" if self.combo_factor < MAX_COMBO else "MAX COMBO"
-        text = f"Points: {self.points}     {combo_text}"
+        text = f"Points: {self.points}  {combo_text}"
         surf = gui_font.render(text, True, RETRO_GREEN)
         *_, width, height = surf.get_rect()
-        x = int((SCREEN_SIZE.x - width) / 2)
+        # x = int((SCREEN_SIZE.x - width) / 2)
+        x = BOARD_SCREEN_OFFSET
         y = int((GUI_HEIGHT - height) / 2)
         y_offs = self.max_combo_animation.current_value or 0
         screen.blit(surf, (x, y + y_offs))
+
+    def _render_remaining_time(self, screen: pygame.surface.Surface):
+        global font
+        if font is None:
+            return
+        if self.mail is None and not self.expired_mail_animation.ongoing:
+            return
+        ticks = self.mail.ticks_until_expiry if self.mail else 0
+        time_text = f"{ticks / FPS:.1f}" if ticks != math.inf else "never"
+        text = f"Mail expires in: {time_text}" if not self.expired_mail_animation.ongoing else "EXPIRED"
+        surf = font.render(text, True, RETRO_GREEN)
+        *_, width, height = surf.get_rect()
+        x_offs, y_offs = (0, 0)
+        if self.expired_mail_animation.ongoing:
+            *_, scaled_width, scaled_height = surf.get_rect()
+            factor = self.expired_mail_animation.current_value or 0
+            surf = pygame.transform.scale(surf, (scaled_width * factor, scaled_height * factor))
+            offs = self.expired_mail_offset_animation.current_value or Coordinate(45, 135)
+            x_offs = (width - scaled_width) + offs.x
+            y_offs =  offs.y #(height - scaled_height)
+        x = SCREEN_SIZE.x - width - BOARD_SCREEN_OFFSET
+        y = int((GUI_HEIGHT - height) / 2)
+        screen.blit(surf, (x + x_offs, y + y_offs))
 
 
 def game_over_by_zero_combo(game: Game) -> bool:
@@ -814,7 +867,8 @@ def main():
         combo_factor_decrease_per_tick=-0.00025,
         combo_factor_decrease_delta_per_tick=-0.0000001,
         level=Level.ONE,
-        mail_size_decay=0.003,  # per tick
+        #mail_size_decay=0.003,  # per tick
+        mail_size_decay=0.03,  # per tick
     )
     params = level_one_params
 
@@ -890,7 +944,7 @@ def main():
                 surf, ((SCREEN_SIZE.x - width) / 2, (SCREEN_SIZE.y - height) / 2)
             )
         pygame.display.flip()
-        clock.tick(50)
+        clock.tick(FPS)
 
     pygame.display.quit()
 

@@ -28,6 +28,7 @@ from src.coordinate import Coordinate
 from src.particle import (CircleParticle, Colour, ParticleSystem,
                           check_min_size_expired)
 
+GAME_TITLE = "Unicast Network Simulator"
 MIN_NODE_SPAWN_STEP = 100
 BOARD_SCREEN_OFFSET = 40
 
@@ -35,7 +36,7 @@ PLAYER_COLOR = (255, 51, 153)
 RETRO_GREEN = (51, 255, 51)
 SCREEN_SIZE = Coordinate(800, 600)
 BOARD_SIZE = Coordinate(600, 500)
-GUI_HEIGHT = SCREEN_SIZE.y - BOARD_SIZE.y
+GUI_HEIGHT = SCREEN_SIZE.y - BOARD_SIZE.y - 50
 MAX_CONNECTIONS = 5
 MAX_THROUGHPUT = 25
 MAX_COMBO = 2
@@ -102,7 +103,7 @@ class Mail:
     size: float
 
     def __post_init__(self):
-        self.previous_decay: float = 0 # positive
+        self.previous_decay: float = 0  # positive
 
     def update(self, game: Game):
         self.previous_decay = game.mail_size_decay * self.decay_factor
@@ -112,7 +113,7 @@ class Mail:
         rect = pygame.Rect(
             *tuple(self.position), int(self.size), int(self.size)
         )  # type: ignore
-        #color = (100, 100, 255)
+        # color = (100, 100, 255)
         color = (51, 51, 255)
         # pygame.draw.circle(screen, color, tuple(self.position), self.size)
         pygame.draw.rect(screen, color, rect, width=0)
@@ -141,7 +142,12 @@ class Mail:
     def ticks_until_expiry(self) -> float:
         if self.expired:
             return 0
-        return (self.size - MIN_MAIL_SIZE) / self.previous_decay if self.previous_decay != 0 else math.inf
+        return (
+            (self.size - MIN_MAIL_SIZE) / self.previous_decay
+            if self.previous_decay != 0
+            else math.inf
+        )
+
 
 @dataclass
 class Node:
@@ -182,12 +188,16 @@ class Node:
     def render(self, screen: pygame.surface.Surface):
         # rect = pygame.Rect(*tuple(self.position), self.size, self.size)  # type: ignore
         # color = (255, 255, 255)
-        #color = (255, 255, 255)
+        # color = (255, 255, 255)
         color = (255, 247, 251)
         # pygame.draw.rect(screen, color, rect, width=0)
         # pygame.draw.circle(screen, color, tuple(self.position), self.size)
-        gfxdraw.aacircle(screen, int(self.position.x), int(self.position.y), self.size, color)
-        gfxdraw.filled_circle(screen, int(self.position.x), int(self.position.y), self.size, color)
+        gfxdraw.aacircle(
+            screen, int(self.position.x), int(self.position.y), self.size, color
+        )
+        gfxdraw.filled_circle(
+            screen, int(self.position.x), int(self.position.y), self.size, color
+        )
         if self.mail:
             self.mail.render(screen)
 
@@ -272,10 +282,19 @@ class Player:
         self.target_animation = Animation(
             [0, 1, 1, 2, 3, 3, 3, 2, 1, 0, -1, -1, 0], tick=2
         )
-        self.path_particle_system = ParticleSystem(CircleParticle, position=Coordinate(), colour=Colour(*self.color), spawn_rate=0.05, expired=True)
-        self.path_particle_system.add_kwargs(size_drift=-0.2, size=round(self.size * 0.7), expiration_algorithm=check_min_size_expired)
+        self.path_particle_system = ParticleSystem(
+            CircleParticle,
+            position=Coordinate(),
+            colour=Colour(*self.color),
+            spawn_rate=0.05,
+            expired=True,
+        )
+        self.path_particle_system.add_kwargs(
+            size_drift=-0.2,
+            size=round(self.size * 0.7),
+            expiration_algorithm=check_min_size_expired,
+        )
         self.path_particle_systems: List[ParticleSystem] = []
-
 
     def take_mail(self, node: Node):
         if not node.mail:
@@ -356,8 +375,12 @@ class Player:
 
     def render(self, screen: pygame.surface.Surface):
         # pygame.draw.circle(screen, color, tuple(self.position), size)
-        gfxdraw.aacircle(screen, int(self.position.x), int(self.position.y), self.size, self.color)
-        gfxdraw.filled_circle(screen, int(self.position.x), int(self.position.y), self.size, self.color)
+        gfxdraw.aacircle(
+            screen, int(self.position.x), int(self.position.y), self.size, self.color
+        )
+        gfxdraw.filled_circle(
+            screen, int(self.position.x), int(self.position.y), self.size, self.color
+        )
         self._render_mail_target(screen)
         self._render_connected_node_numbers(screen)
         self._render_particle_systems(screen)
@@ -365,8 +388,9 @@ class Player:
     def _render_particle_systems(self, screen: pygame.surface.Surface):
         for particle_system in self.path_particle_systems:
             particle_system.render(screen)
-        self.path_particle_systems = [x for x in self.path_particle_systems if not x.fully_expired]
-
+        self.path_particle_systems = [
+            x for x in self.path_particle_systems if not x.fully_expired
+        ]
 
     def _render_connected_node_numbers(self, screen: pygame.surface.Surface):
         global font
@@ -398,7 +422,9 @@ class Player:
             return
         self.target_node = self.connected_nodes[index]
 
-        new_particle_system = self.path_particle_system.clone(position=self.position.clone())
+        new_particle_system = self.path_particle_system.clone(
+            position=self.position.clone()
+        )
         self.path_particle_systems.append(new_particle_system)
 
     @property
@@ -436,7 +462,7 @@ class Connection:
 
     def render(self, screen: pygame.surface.Surface):
         # color = (200, 200, 200)
-        #color = (36, 36, 36)
+        # color = (36, 36, 36)
         for diff in range(self.width):
             pygame.draw.aaline(
                 screen,
@@ -463,16 +489,56 @@ class Score:
     points: int = 0
 
     def __post_init__(self):
-        self.max_combo_animation = Animation(values=[0, 1, 1, 2, 2, 2, 2, 1, 1, 0, -1, -1, -2, -2, -2, -2, -1, -1] * 3 + [0], tick=3)
-        self.expired_mail_animation = Animation(values=[1, 1.05, 1.1, 1.1, 1.05, 1, 0.9, 0.95, 0.8, 0.7, 0.6, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0], tick=4)
-        self.expired_mail_offset_animation = Animation(values=[Coordinate(0, 0), Coordinate(3, -10), Coordinate(6, -20), Coordinate(9, -20), Coordinate(12, 0), Coordinate(15, 35), Coordinate(20, 70), Coordinate(25, 105)], tick=5)
+        self.max_combo_animation = Animation(
+            values=[0, 1, 1, 2, 2, 2, 2, 1, 1, 0, -1, -1, -2, -2, -2, -2, -1, -1] * 3
+            + [0],
+            tick=3,
+        )
+        self.expired_mail_animation = Animation(
+            values=[
+                1,
+                1.05,
+                1.1,
+                1.1,
+                1.05,
+                1,
+                0.9,
+                0.95,
+                0.8,
+                0.7,
+                0.6,
+                0.4,
+                0.3,
+                0.2,
+                0.15,
+                0.1,
+                0.05,
+                0,
+            ],
+            tick=4,
+        )
+        self.expired_mail_offset_animation = Animation(
+            values=[
+                Coordinate(0, 0),
+                Coordinate(3, -10),
+                Coordinate(6, -20),
+                Coordinate(9, -20),
+                Coordinate(12, 0),
+                Coordinate(15, 35),
+                Coordinate(20, 70),
+                Coordinate(25, 105),
+                Coordinate(30, 140),
+                Coordinate(35, 175),
+            ],
+            tick=5,
+        )
         self.mail: Optional[Mail] = None
 
     def update(self, game: Game):
         self.combo_factor = saturate(
             self.combo_factor + self.combo_factor_decrease_per_tick,
             min_=MIN_COMBO,
-            max_=MAX_COMBO + 1, # give some leeway to show MAX COMBO text
+            max_=MAX_COMBO + 1,  # give some leeway to show MAX COMBO text
         )
         self.combo_factor_decrease_per_tick += self.combo_factor_decrease_delta_per_tick
         self.max_combo_animation.update(game)
@@ -526,17 +592,25 @@ class Score:
             return
         ticks = self.mail.ticks_until_expiry if self.mail else 0
         time_text = f"{ticks / FPS:.1f}" if ticks != math.inf else "never"
-        text = f"Mail expires in: {time_text}" if not self.expired_mail_animation.ongoing else "EXPIRED"
+        text = (
+            f"Mail expires in: {time_text}"
+            if not self.expired_mail_animation.ongoing
+            else "EXPIRED"
+        )
         surf = font.render(text, True, RETRO_GREEN)
         *_, width, height = surf.get_rect()
         x_offs, y_offs = (0, 0)
         if self.expired_mail_animation.ongoing:
             *_, scaled_width, scaled_height = surf.get_rect()
-            factor = self.expired_mail_animation.current_value or 0
-            surf = pygame.transform.scale(surf, (scaled_width * factor, scaled_height * factor))
-            offs = self.expired_mail_offset_animation.current_value or Coordinate(45, 135)
+            factor = self.expired_mail_animation.current_value or self.expired_mail_animation.values[-1]  # type: ignore
+            surf = pygame.transform.scale(
+                surf, (scaled_width * factor, scaled_height * factor)
+            )
+            offs = self.expired_mail_offset_animation.current_value or Coordinate(
+                45, 135
+            )
             x_offs = (width - scaled_width) + offs.x
-            y_offs =  offs.y #(height - scaled_height)
+            y_offs = offs.y  # (height - scaled_height)
         x = SCREEN_SIZE.x - width - BOARD_SCREEN_OFFSET
         y = int((GUI_HEIGHT - height) / 2)
         screen.blit(surf, (x + x_offs, y + y_offs))
@@ -780,6 +854,7 @@ def save_game_data(game: Game):
         save_data.cleared_levels.append(game.level)
     save_data.save()
 
+
 def init_font(font_size: int) -> Optional[pygame.font.Font]:
     path = os.path.join(os.path.dirname(__file__), "media", "VT323-Regular.ttf")
     try:
@@ -793,6 +868,7 @@ def init_font(font_size: int) -> Optional[pygame.font.Font]:
     except Exception as exc:  # pylint: disable=broad-except
         logging.exception("Could not init font due to exception %s", str(exc))
 
+
 def init_gui_font(font_size: int) -> Optional[pygame.font.Font]:
     path = os.path.join(os.path.dirname(__file__), "media", "VT323-Regular.ttf")
     try:
@@ -802,11 +878,10 @@ def init_gui_font(font_size: int) -> Optional[pygame.font.Font]:
         logging.info("Falling back to default font...")
 
     try:
-        return pygame.font.SysFont(
-            name=pygame.font.get_default_font(), size=font_size
-        )
+        return pygame.font.SysFont(name=pygame.font.get_default_font(), size=font_size)
     except Exception as exc:  # pylint: disable=broad-except
         logging.exception("Could not init gui font due to exception %s", str(exc))
+
 
 @dataclass
 class Config:
@@ -816,6 +891,7 @@ class Config:
     seed: Optional[int] = None
     muted: bool = False
     log_enabled: bool = True
+
 
 def read_config_json() -> Config:
     try:
@@ -829,8 +905,35 @@ def read_config_json() -> Config:
         return Config()
 
 
+def set_taskbar_icon():
+    # pylint: disable=import-outside-toplevel
+    import ctypes
+    import sys
+
+    if sys.platform.startswith("win32"):
+        myappid = f"rbaltrusch.games.{GAME_TITLE}.0.1.0"  # arbitrary string
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
+
+def load_icon():
+    try:
+        path = os.path.join(os.path.dirname(__file__), "media", "icon.png")
+        icon = pygame.image.load(path)
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.exception("Could not load icon due to exception %s", str(exc))
+        return
+
+    pygame.display.set_icon(icon)
+    try:
+        set_taskbar_icon()
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.exception("Could not set taskbar icon due to exception %s", str(exc))
+
+
 def main():
     pygame.init()
+    pygame.display.set_caption(GAME_TITLE)
+    load_icon()
 
     config = read_config_json()
     log_enabled = config.log_enabled
@@ -840,10 +943,14 @@ def main():
     seed = config.seed
     muted = config.muted
 
-    handlers = [logging.NullHandler()] if not log_enabled else [logging.FileHandler("mailgame.log")]
-    logging.basicConfig(handlers=handlers, level=logging.INFO, format="%(asctime)s %(message)s")
-
-
+    handlers = (
+        [logging.NullHandler()]
+        if not log_enabled
+        else [logging.FileHandler("mailgame.log")]
+    )
+    logging.basicConfig(
+        handlers=handlers, level=logging.INFO, format="%(asctime)s %(message)s"
+    )
 
     flags = pygame.FULLSCREEN if full_screen else 0
     screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=flags)
@@ -853,7 +960,7 @@ def main():
     global gui_font, font
     font = init_font(font_size)
     gui_font = init_gui_font(gui_font_size)
-    
+
     level_one_params = Params(
         amount=Stat(30, 3, 25),
         throughput=Stat(4, 0.8, 1.5),
@@ -867,8 +974,7 @@ def main():
         combo_factor_decrease_per_tick=-0.00025,
         combo_factor_decrease_delta_per_tick=-0.0000001,
         level=Level.ONE,
-        #mail_size_decay=0.003,  # per tick
-        mail_size_decay=0.03,  # per tick
+        mail_size_decay=0.003,  # per tick
     )
     params = level_one_params
 
@@ -919,10 +1025,10 @@ def main():
         game.update()
 
         if game.over:
-            Connection.color = (17, 150, 17, 90) # type: ignore
-            Player.color = (178, 71, 125) # type: ignore
+            Connection.color = (17, 150, 17, 90)  # type: ignore
+            Player.color = (178, 71, 125)  # type: ignore
         screen.fill((12, 12, 12))
-        #board.fill((36, 36, 36))
+        # board.fill((36, 36, 36))
         board.fill((12, 12, 12))
         for entity in game.entities:
             entity.render(board)
@@ -936,9 +1042,7 @@ def main():
                 save_game_data(game)
                 saved = True
 
-            surf = gui_font.render(
-                "Game Over! Press R to restart.", True, RETRO_GREEN
-            )
+            surf = gui_font.render("Game Over! Press R to restart.", True, RETRO_GREEN)
             *_, width, height = surf.get_rect()
             screen.blit(
                 surf, ((SCREEN_SIZE.x - width) / 2, (SCREEN_SIZE.y - height) / 2)

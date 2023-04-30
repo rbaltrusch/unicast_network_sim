@@ -106,6 +106,7 @@ class Mail:
     parent: Union[Node, Player]
     target_node: Node
     size: float
+    animation: Animation
 
     def __post_init__(self):
         self.previous_decay: float = 0  # positive
@@ -113,10 +114,14 @@ class Mail:
     def update(self, game: Game):
         self.previous_decay = game.mail_size_decay * self.decay_factor
         self.size -= self.previous_decay
+        self.animation.update(game)
+        if not self.animation.ongoing:
+            self.animation.start()
 
     def render(self, screen: pygame.surface.Surface):
+        y = self.animation.current_value or 0
         rect = pygame.Rect(
-            *tuple(self.position), int(self.size), int(self.size)
+            *tuple(self.position + Coordinate(y=y)), int(self.size), int(self.size)
         )  # type: ignore
         # color = (100, 100, 255)
         color = (51, 51, 255)
@@ -188,6 +193,7 @@ class Node:
             parent=self,
             size=random.randint(7, 14),
             target_node=random.choice(list(x for x in game.nodes if x is not self)),
+            animation=Animation(values=[0, 1, 2, 2, 2, 1, 0, -1, -2, -2, -2, -1], tick=4)
         )
 
     def render(self, screen: pygame.surface.Surface):
@@ -228,6 +234,10 @@ class Animation:
         self.current_tick: int = 0
         self.ongoing: bool = False
         self.current_value: Optional[Any] = None
+
+    def stop(self):
+        self.start()
+        self.ongoing = False
 
     def start(self):
         self.start_tick = None
@@ -271,6 +281,7 @@ class Player:
     mail_deliver_sound: SoundCollection
     mail_expiry_sound: SoundCollection
     target_sound: SoundCollection
+    mail_target_colour: Colour = MAIL_TARGET_COLOR
 
     mail: Optional[Mail] = None
 
@@ -425,7 +436,7 @@ class Player:
             return
         size_offset = self.target_animation.current_value or 0
         node_size = max(self.mail.target_node.size, 7) + size_offset
-        color = MAIL_TARGET_COLOR.colour
+        color = self.mail_target_colour.colour
         x, y = self.mail.target_node.position
         gfxdraw.aacircle(screen, int(x), int(y), node_size, color)
         gfxdraw.filled_circle(screen, int(x), int(y), node_size, color)
@@ -503,6 +514,8 @@ class Score:
     combo_factor_decrease_per_tick: float  # negative
     combo_factor_decrease_delta_per_tick: float  # negative
     max_combo_sound: SoundCollection
+    timeout_sound: SoundCollection
+    timeout_combo_limits: List[float]
     combo_factor: float = 1
     points: int = 0
 
@@ -551,17 +564,33 @@ class Score:
             ],
             tick=5,
         )
+        self.timeout_animation = Animation(values=[0, 1, 2, 2, 1, 0, -1, -2, -2, -1] * 3, tick=3)
         self.mail: Optional[Mail] = None
+        self.timing_out: bool = False
 
     def update(self, game: Game):
-        if time.time() - game.player.stationary_since > MAX_IDLE_TIME and not self.controls_animation.ongoing:
-            self.controls_animation.start()
-        self.combo_factor = saturate(
+        if time.time() - game.player.stationary_since > MAX_IDLE_TIME:
+            if not self.controls_animation.ongoing:
+                self.controls_animation.start()
+        elif self.controls_animation.ongoing:
+            self.controls_animation.stop()
+
+        new_combo_factor = saturate(
             self.combo_factor + self.combo_factor_decrease_per_tick,
             min_=MIN_COMBO,
             max_=MAX_COMBO + 1,  # give some leeway to show MAX COMBO text
         )
+
+        # timeout sound and anim
+        self.timing_out = any(new_combo_factor < x < self.combo_factor for x in self.timeout_combo_limits)
+        if self.timing_out:
+            self.timeout_sound.play()
+            if not self.timeout_animation.ongoing:
+                self.timeout_animation.start()
+
+        self.combo_factor = new_combo_factor
         self.combo_factor_decrease_per_tick += self.combo_factor_decrease_delta_per_tick
+        self.timeout_animation.update(game)
         self.max_combo_animation.update(game)
         self.expired_mail_animation.update(game)
         self.controls_animation.update(game)
@@ -599,25 +628,40 @@ class Score:
             return
         text = "Press 1-9 to move"
         surf = font.render(text, True, RETRO_GREEN)
+        *_, height = surf.get_rect()
         x = BOARD_SCREEN_OFFSET
         y = GUI_HEIGHT
-        print(self.controls_animation.ongoing, self.controls_animation.current_value)
         y_offs = self.controls_animation.current_value or 0
         screen.blit(surf, (x, y + y_offs))
+
+        text = "Restart [R]"
+        surf = font.render(text, True, RETRO_GREEN)
+        x = BOARD_SCREEN_OFFSET
+        y = GUI_HEIGHT + height
+        screen.blit(surf, (x, y))
         
     def _render_score(self, screen: pygame.surface.Surface):
         global gui_font
         if gui_font is None:
             return
-        combo = f"{self.combo_factor:.2f}" if self.combo_factor != 0 else 0
-        combo_text = f"Combo: {combo}" if self.combo_factor < MAX_COMBO else "MAX COMBO"
-        text = f"Points: {self.points}  {combo_text}"
+
+        # points text
+        text = f"Points: {self.points}"
         surf = gui_font.render(text, True, RETRO_GREEN)
         *_, width, height = surf.get_rect()
-        # x = int((SCREEN_SIZE.x - width) / 2)
         x = BOARD_SCREEN_OFFSET
         y = int((GUI_HEIGHT - height) / 2)
-        y_offs = self.max_combo_animation.current_value or 0
+        screen.blit(surf, (x, y))
+
+        combo = f"{self.combo_factor:.2f}" if self.combo_factor != 0 else 0
+        exclamation = "" if not self.timeout_animation.ongoing else "!!!"
+        text = f"Combo: {combo}{exclamation}" if self.combo_factor < MAX_COMBO else "MAX COMBO"
+        surf = gui_font.render(text, True, RETRO_GREEN)
+        *_, height = surf.get_rect()
+        # x = int((SCREEN_SIZE.x - width) / 2)
+        x = BOARD_SCREEN_OFFSET + width + 50
+        y = int((GUI_HEIGHT - height) / 2)
+        y_offs = self.max_combo_animation.current_value or self.timeout_animation.current_value or 0
         screen.blit(surf, (x, y + y_offs))
 
     def _render_remaining_time(self, screen: pygame.surface.Surface):
@@ -669,16 +713,21 @@ class Game:
     mail_size_decay: float
     seed: int
     level: Level
+    game_over_sound: Sound
     game_over_strategy: Callable[[Game], bool]
     game_win_strategy: Callable[[Game], bool] = endless_game_win_strategy
     score: Score = None  # type: ignore
 
     def __post_init__(self):
         self.tick: int = 0
+        self._previous_over_state: bool = False
 
     def update(self):
         self.tick += 1
         self.score.update(self)
+        if self.over and not self._previous_over_state:
+            self.game_over_sound.play()
+        self._previous_over_state = self.over
 
     @property
     def entities(self) -> Iterable[Entity]:
@@ -723,6 +772,7 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
 
     Connection.color = RETRO_GREEN
     Player.color = PLAYER_COLOR
+    Player.mail_target_colour = MAIL_TARGET_COLOR
 
     nodes = spawn_nodes(params)
     connections = spawn_connections(nodes, params)
@@ -767,6 +817,7 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
         level=params.level,
         game_over_strategy=game_over_by_zero_combo,
         mail_size_decay=params.mail_size_decay,
+        game_over_sound=Sound(fullpath("gameover.wav"), volume=0.4)
     )
     game.score = Score(
         game,
@@ -774,6 +825,8 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
         combo_factor=params.combo_factor,
         combo_factor_decrease_per_tick=params.combo_factor_decrease_per_tick,
         combo_factor_decrease_delta_per_tick=params.combo_factor_decrease_delta_per_tick,
+        timeout_combo_limits=[1, 0.8, 0.6, 0.4, 0.3, 0.2, 0.15, 0.12, 0.1, 0.08, 0.065, 0.05, 0.04, 0.03, 0.025, 0.02, 0.015, 0.01, 0.005],
+        timeout_sound=SoundCollection([Sound(fullpath("timeout.wav"), volume=0.25)])
     )
 
     for node in random.choices(nodes, k=min(len(nodes), params.initial_mail)):
@@ -1076,11 +1129,18 @@ def render_menu(screen: pygame.surface.Surface, title_animation: Animation, game
         y = SCREEN_SIZE.y - 50 - height
         screen.blit(surf, (x, y))
 
-        
+        if font is not None:
+            surf = font.render("Fullscreen [F]  Mute [M]", True, RETRO_GREEN)
+            *_, width, height = surf.get_rect()
+            x = int((SCREEN_SIZE.x - width) / 2)
+            y = SCREEN_SIZE.y - 50
+            screen.blit(surf, (x, y))
+
     # story
     texts: List[str] = [
         "April 30th 1982",
-        "Your boss left you in the server room to fix the blue packet routing.",
+        "Your boss left you in the server room to fix the blue packet routing, and",
+        "told you to hold out as long as possible before the system combo drops to 0.",
         "All he handed you before leaving were some number keys to move around...",
         "",
         "A game by Richard Baltrusch (@richbaltrusch)",
@@ -1209,6 +1269,7 @@ def main():
         if game.over:
             Connection.color = (17, 150, 17, 90)  # type: ignore
             Player.color = (178, 71, 125)  # type: ignore
+            Player.mail_target_colour = Colour(178, 100, 34, 125)
         screen.fill((12, 12, 12))
         # board.fill((36, 36, 36))
         board.fill((12, 12, 12))

@@ -717,7 +717,7 @@ class Score:
         ticks = self.mail.ticks_until_expiry if self.mail else 0
         time_text = f"{ticks / FPS:.1f}" if ticks != math.inf else "never"
         text = (
-            f"Mail expires in: {time_text}"
+            f"Packet expires in: {time_text}"
             if not self.expired_mail_animation.ongoing
             else "EXPIRED"
         )

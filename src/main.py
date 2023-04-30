@@ -453,15 +453,17 @@ class Player:
         if font is None:
             return
         # color = (50, 50, 50)
-        color = (255, 255, 255)
-        for i, node in enumerate(self.connected_nodes, 1):
-            travel_coord = self._calculate_travel_coordinates(
-                self.speed * 3.5, self.position, node.position
-            )
-            surf = font.render(str(i), True, color)
-            screen.blit(surf, tuple(travel_coord + self.position))
-            if i >= 9: # running out of number keys, so removing text to avoid confusion
-                break
+        colors = [self.color, (255, 255, 255)]
+        offsets = [(2, 2), (0, 0)]
+        for color, (x, y) in zip(colors, offsets):
+            for i, node in enumerate(self.connected_nodes, 1):
+                travel_coord = self._calculate_travel_coordinates(
+                    self.speed * 3.5, self.position, node.position
+                )
+                surf = font.render(str(i), True, color)
+                screen.blit(surf, tuple(travel_coord + self.position + Coordinate(x, y)))
+                if i >= 9: # running out of number keys, so removing text to avoid confusion
+                    break
 
     def _render_mail_target(self, screen: pygame.surface.Surface):
         # point animation
@@ -827,14 +829,14 @@ def init_game(params: Params, seed: Optional[int] = None) -> Game:
         node.connections = list(conn_dict.get(node, set()))
 
     nodes = [x for x in nodes if x.connections]
-    # removed_connections = set()
-    # for node in nodes:
-    #     for connection in node.connections[MAX_CONNECTIONS:]:
-    #         connection.remove()
-    #         removed_connections.add(connection)
-    #     node.connections = node.connections[:MAX_CONNECTIONS]
-    # nodes = [x for x in nodes if x.connections]
-    # connections = [x for x in connections if x not in removed_connections]
+    removed_connections = set()
+    for node in nodes:
+        for connection in node.connections[MAX_CONNECTIONS:]:
+            connection.remove()
+            removed_connections.add(connection)
+        node.connections = node.connections[:MAX_CONNECTIONS]
+    nodes = [x for x in nodes if x.connections]
+    connections = [x for x in connections if x not in removed_connections]
 
     target_node = min(nodes, key=lambda x: x.position.x)
 
@@ -900,9 +902,13 @@ def spawn_connections(nodes: Iterable[Node], params: Params) -> Iterable[Connect
         for _ in range(int(params.connections_per_node())):
             possible_connections = [
                 (dist, node)
-                for dist, node in distances[node][:MAX_CONNECTIONS]
+                for dist, node in distances[node]
                 if dist < params.max_connection_length
-            ]
+            ][:MAX_CONNECTIONS]
+            # possible_connections.sort(key=lambda x: abs(calculate_angle(node.position, x[1].position)), reverse=True)
+            # possible_connections = possible_connections[:MAX_CONNECTIONS]
+            # print([calculate_angle(node.position, x.position) for _, x in possible_connections])
+            # #[:MAX_CONNECTIONS]
             if not possible_connections:
                 break
             target_node = possible_connections.pop(
@@ -1188,7 +1194,7 @@ def render_menu(screen: pygame.surface.Surface, title_animation: Animation, game
 
     # story
     texts: List[str] = [
-        "July 30th 1982",
+        "July 30th, 1982",
         "Your boss left you in the server room to fix the blue packet routing, and",
         "told you to deliver as long as possible before the system combo drops to 0.",
         "All he handed you before leaving were some number keys to move around...",
@@ -1208,17 +1214,28 @@ def init_title_animation() -> Animation:
     #eturn Animation(values=[], tick=4)
     return Animation(values=[0, 1, 1, 1, 2, 2, 2, 1, 1, 1, 0, 0, -1, -1, -1, -2, -2, -2, -1, -1, -1, 0], tick=3)
 
+def disable_mouse():
+    try:
+        pygame.mouse.set_cursor((8,8),(0,0),(0,0,0,0,0,0,0,0),(0,0,0,0,0,0,0,0)) #make cursor invisible
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.exception(
+            "Could not disable mouse due to exception %s", str(exc)
+        )
+
 def main():
     pygame.init()
     pygame.display.set_caption(GAME_TITLE)
     load_icon()
+    disable_mouse()
+
+    save_data = load_save_data()
 
     config = read_config_json()
     log_enabled = config.log_enabled
     font_size = config.font_size
     gui_font_size = config.gui_font_size
     full_screen = config.full_screen
-    seed = config.seed
+    seed = config.seed or (39577563 if save_data.highscore == 0 else None)
     muted = config.muted
     volume = config.volume
 

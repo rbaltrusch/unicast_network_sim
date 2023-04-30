@@ -2,7 +2,7 @@
     "font_size": 25,
     "gui_font_size": 40,
     "full_screen": false,
-    "seed": null,
+    "seed": 39577563,
     "muted": false,
     "log_enabled": true,
     "music_volume": 1

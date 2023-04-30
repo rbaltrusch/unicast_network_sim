@@ -13,7 +13,7 @@ from typing import Callable, List, Tuple, Type, Union
 
 import pygame
 
-from src.coordinate import Coordinate
+from coordinate import Coordinate
 
 
 @dataclass
@@ -118,7 +118,7 @@ class CircleParticle(RectParticle):
     def render(self, screen: pygame.surface.Surface):
         if not self.expired:
             pygame.draw.circle(
-                screen, self.colour.colour, tuple(self.position), self.size, self.width
+                screen, self.colour.colour, (int(self.position.x), int(self.position.y)), self.size, self.width
             )
 
 

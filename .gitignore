@@ -23,3 +23,6 @@ diary.txt
 doc
 *.sav
 *.log
+*.tar.gz
+release/
+*.whl

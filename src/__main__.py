@@ -16,6 +16,7 @@ import math
 import os
 import pickle
 import random
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import (Any, Callable, Dict, Iterable, Iterator, List, Mapping,
@@ -32,6 +33,8 @@ GAME_TITLE = "Unicast Network Simulator"
 MIN_NODE_SPAWN_STEP = 100
 BOARD_SCREEN_OFFSET = 40
 
+TITLE_FONT_SIZE = 70
+MAX_IDLE_TIME = 5
 PLAYER_COLOR = (255, 51, 153)
 RETRO_GREEN = (51, 255, 51)
 SCREEN_SIZE = Coordinate(800, 600)
@@ -50,6 +53,7 @@ VOLUME_SCALING = 2
 
 font: Optional[pygame.font.Font] = None
 gui_font: Optional[pygame.font.Font] = None
+title_font: Optional[pygame.font.Font] = None
 
 
 def chance(factor: float) -> bool:
@@ -232,7 +236,7 @@ class Animation:
         self._iterator = None
         self.current_value = None
 
-    def update(self, game: Game):
+    def update(self, game: Union[Game, DummyGame]):
         if not self.ongoing:
             return
 
@@ -274,6 +278,7 @@ class Player:
     size = 10
 
     def __post_init__(self):
+        self.stationary_since: float = time.time()
         self.target_node.occupied = True
         self.origin_node: Node = self.target_node
         self.target_node_particle_system = ParticleSystem(
@@ -430,6 +435,7 @@ class Player:
     def set_target_connection(self, index: int):
         if len(self.target_node.connections) <= index:
             return
+        self.stationary_since: float = time.time()
         self.target_node = self.connected_nodes[index]
         self.move_sound.play()
 
@@ -506,6 +512,7 @@ class Score:
             + [0],
             tick=3,
         )
+        self.controls_animation = Animation(values=[0, 1, 1, 2, 2, 2, 2, 1, 1, 0, -1, -1, -2, -2, -2, -2, -1, -1] * 3 + [0], tick=3)
         self.expired_mail_animation = Animation(
             values=[
                 1,
@@ -547,6 +554,8 @@ class Score:
         self.mail: Optional[Mail] = None
 
     def update(self, game: Game):
+        if time.time() - game.player.stationary_since > MAX_IDLE_TIME and not self.controls_animation.ongoing:
+            self.controls_animation.start()
         self.combo_factor = saturate(
             self.combo_factor + self.combo_factor_decrease_per_tick,
             min_=MIN_COMBO,
@@ -555,6 +564,7 @@ class Score:
         self.combo_factor_decrease_per_tick += self.combo_factor_decrease_delta_per_tick
         self.max_combo_animation.update(game)
         self.expired_mail_animation.update(game)
+        self.controls_animation.update(game)
         self.expired_mail_offset_animation.update(game)
         self.set_mail(game.player.mail)
 
@@ -581,7 +591,20 @@ class Score:
     def render(self, screen: pygame.surface.Surface):
         self._render_score(screen)
         self._render_remaining_time(screen)
+        self._render_controls(screen)
 
+    def _render_controls(self, screen: pygame.surface.Surface):
+        global font
+        if font is None:
+            return
+        text = "Press 1-9 to move"
+        surf = font.render(text, True, RETRO_GREEN)
+        x = BOARD_SCREEN_OFFSET
+        y = GUI_HEIGHT
+        print(self.controls_animation.ongoing, self.controls_animation.current_value)
+        y_offs = self.controls_animation.current_value or 0
+        screen.blit(surf, (x, y + y_offs))
+        
     def _render_score(self, screen: pygame.surface.Surface):
         global gui_font
         if gui_font is None:
@@ -953,7 +976,7 @@ def load_icon():
 
 
 def load_music(volume: float):
-    path = os.path.join(os.path.dirname(__file__), "media", "unicast3.wav")
+    path = os.path.join(os.path.dirname(__file__), "media", "unicast4.wav")
     try:
         pygame.mixer.init()
         pygame.mixer.music.set_volume(volume)
@@ -1017,6 +1040,64 @@ def set_volume(muted: bool, volume: float):
             "Could not set mixer volume due to exception %s", str(exc)
         )
 
+class DummyGame:
+    def __init__(self):
+        self.tick: int = 0
+
+    def update(self):
+        self.tick += 1
+
+def render_menu(screen: pygame.surface.Surface, title_animation: Animation, game: DummyGame):
+    global font, gui_font, title_font
+
+    screen.fill((12, 12, 12))
+    if not title_animation.ongoing:
+        title_animation.start()
+
+    game.update()
+
+    #title
+    if title_font is not None:
+        text = GAME_TITLE
+        surf = title_font.render(text, True, RETRO_GREEN)
+        *_, width, height = surf.get_rect()
+        x = int((SCREEN_SIZE.x - width) / 2)
+        y = int((GUI_HEIGHT - height) / 2) + 50
+        y_offs = title_animation.current_value or 0
+        title_animation.update(game)
+        screen.blit(surf, (x, y + y_offs * 3))
+
+    # press enter to play
+    if gui_font is not None:
+        text = "Press ENTER to start the game!"
+        surf = gui_font.render(text, True, RETRO_GREEN)
+        *_, width, height = surf.get_rect()
+        x = int((SCREEN_SIZE.x - width) / 2)
+        y = SCREEN_SIZE.y - 50 - height
+        screen.blit(surf, (x, y))
+
+        
+    # story
+    texts: List[str] = [
+        "April 30th 1982",
+        "Your boss left you in the server room to fix the blue packet routing.",
+        "All he handed you before leaving were some number keys to move around...",
+        "",
+        "A game by Richard Baltrusch (@richbaltrusch)",
+    ]
+    if font is not None:
+        for i, text in enumerate(texts):
+            surf = font.render(text, True, RETRO_GREEN)
+            *_, width, height = surf.get_rect()
+            x = int((SCREEN_SIZE.x - width) / 2)
+            y = 250 + height * i
+            screen.blit(surf, (x, y))
+
+
+def init_title_animation() -> Animation:
+    #eturn Animation(values=[], tick=4)
+    return Animation(values=[0, 1, 1, 1, 2, 2, 2, 1, 1, 1, 0, 0, -1, -1, -1, -2, -2, -2, -1, -1, -1, 0], tick=3)
+
 def main():
     pygame.init()
     pygame.display.set_caption(GAME_TITLE)
@@ -1047,9 +1128,10 @@ def main():
     board = pygame.Surface(tuple(BOARD_SIZE))
     clock = pygame.time.Clock()
 
-    global gui_font, font
+    global gui_font, font, title_font
     font = init_font(font_size)
     gui_font = init_gui_font(gui_font_size)
+    title_font = init_gui_font(font_size=TITLE_FONT_SIZE)
 
     level_one_params = Params(
         amount=Stat(30, 3, 25),
@@ -1071,22 +1153,24 @@ def main():
 
     logging.info("Save data: %s", load_save_data())
 
-    game = init_game(params, seed)
-    in_game = True
+    title_animation = init_title_animation()
+    game: Optional[Game] = None
+    # game = init_game(params, seed)
     terminated = False
     saved = False
+    dummy_game = DummyGame()
     while not terminated:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 terminated = True
-            if event.type == pygame.KEYDOWN and in_game:
+            if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     terminated = True
                 if event.key == pygame.K_f:
                     full_screen = not full_screen
                     flags = pygame.FULLSCREEN if full_screen else 0
                     screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=flags)
-                if game.player.reached_target and not game.over:
+                if game is not None and game.player.reached_target and not game.over:
                     if event.key == pygame.K_1:
                         game.player.set_target_connection(0)
                     if event.key == pygame.K_2:
@@ -1106,12 +1190,18 @@ def main():
                     if event.key == pygame.K_9:
                         game.player.set_target_connection(8)
                 if event.key == pygame.K_r or event.key == pygame.K_RETURN:  # restart
-                    game = init_game(params)
+                    game = init_game(params, seed=seed if not game else None)
                     saved = False
                 if event.key == pygame.K_m:
                     muted = not muted
 
         set_volume(muted, volume)
+        if game is None:
+            render_menu(screen, title_animation, dummy_game)
+            pygame.display.flip()
+            clock.tick(FPS)
+            continue
+
         for entity in itertools.chain(game.entities, game.gui_entities):
             entity.update(game)
         game.update()
@@ -1134,11 +1224,12 @@ def main():
                 save_game_data(game)
                 saved = True
 
-            surf = gui_font.render("Game Over! Press R to restart.", True, RETRO_GREEN)
-            *_, width, height = surf.get_rect()
-            screen.blit(
-                surf, ((SCREEN_SIZE.x - width) / 2, (SCREEN_SIZE.y - height) / 2)
-            )
+            if gui_font is not None:
+                surf = gui_font.render("Game Over! Press R to restart.", True, RETRO_GREEN)
+                *_, width, height = surf.get_rect()
+                screen.blit(
+                    surf, ((SCREEN_SIZE.x - width) / 2, (SCREEN_SIZE.y - height) / 2)
+                )
         pygame.display.flip()
         clock.tick(FPS)
 

@@ -24,6 +24,14 @@ cd src
 python main.py
 ```
 
+## Pygbag
+
+To build the WebAssembly build of the game, install pygbag, then run:
+
+```
+python -m pygbag src
+```
+
 ## Pyinstaller build
 
 Install pygame and pyinstaller:

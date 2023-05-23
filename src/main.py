@@ -22,8 +22,9 @@ from dataclasses import dataclass, field
 from typing import (Any, Callable, Dict, Iterable, Iterator, List, Mapping,
                     Optional, Protocol, Tuple, Union)
 
+import asyncio
 import pygame
-from pygame import gfxdraw
+# from pygame import gfxdraw
 
 from coordinate import Coordinate
 from particle import (CircleParticle, Colour, ParticleSystem,
@@ -209,13 +210,13 @@ class Node:
         # color = (255, 255, 255)
         color = (255, 247, 251)
         # pygame.draw.rect(screen, color, rect, width=0)
-        # pygame.draw.circle(screen, color, tuple(self.position), self.size)
-        gfxdraw.aacircle(
-            screen, int(self.position.x), int(self.position.y), self.size, color
-        )
-        gfxdraw.filled_circle(
-            screen, int(self.position.x), int(self.position.y), self.size, color
-        )
+        pygame.draw.circle(screen, color, tuple(self.position), self.size)
+        # gfxdraw.aacircle(
+        #     screen, int(self.position.x), int(self.position.y), self.size, color
+        # )
+        # gfxdraw.filled_circle(
+        #     screen, int(self.position.x), int(self.position.y), self.size, color
+        # )
         if self.mail:
             self.mail.render(screen)
 
@@ -430,13 +431,13 @@ class Player:
             particle_system.expired = True
 
     def render(self, screen: pygame.surface.Surface):
-        # pygame.draw.circle(screen, color, tuple(self.position), size)
-        gfxdraw.aacircle(
-            screen, int(self.position.x), int(self.position.y), self.size, self.color
-        )
-        gfxdraw.filled_circle(
-            screen, int(self.position.x), int(self.position.y), self.size, self.color
-        )
+        pygame.draw.circle(screen, self.color, tuple(self.position), self.size)
+        # gfxdraw.aacircle(
+        #     screen, int(self.position.x), int(self.position.y), self.size, self.color
+        # )
+        # gfxdraw.filled_circle(
+        #     screen, int(self.position.x), int(self.position.y), self.size, self.color
+        # )
         self._render_mail_target(screen)
         self._render_connected_node_numbers(screen)
         self._render_particle_systems(screen)
@@ -480,8 +481,9 @@ class Player:
         node_size = max(self.mail.target_node.size, 7) + size_offset + 5
         color = self.mail_target_colour.colour
         x, y = self.mail.target_node.position
-        gfxdraw.aacircle(screen, int(x), int(y), node_size, color)
-        gfxdraw.filled_circle(screen, int(x), int(y), node_size, color)
+        pygame.draw.circle(screen, color, (x, y), node_size)
+        # gfxdraw.aacircle(screen, int(x), int(y), node_size, color)
+        # gfxdraw.filled_circle(screen, int(x), int(y), node_size, color)
         if not self.target_node_particle_system.expired:
             self.target_node_particle_system.render(screen)
 
@@ -1222,66 +1224,87 @@ def disable_mouse():
             "Could not disable mouse due to exception %s", str(exc)
         )
 
-def main():
-    pygame.init()
-    pygame.display.set_caption(GAME_TITLE)
-    load_icon()
-    disable_mouse()
+# async def async_main():
+#     pygame.init()
+#     clock = pygame.time.Clock()
+#     screen = pygame.display.set_mode(tuple(SCREEN_SIZE))
+#     colour = (255, 255, 255)
 
-    save_data = load_save_data()
+#     terminated = False
+#     while not terminated:
+#         for event in pygame.event.get():
+#             if event.type == pygame.QUIT:
+#                 terminated = True
+#             if event.type == pygame.KEYDOWN:
+#                 if event.key == pygame.K_ESCAPE:
+#                     terminated = True
+#                 if event.key == pygame.K_f:
+#                     colour = (0, 0, 0) if colour == (255, 255, 255) else (255, 255, 255)
 
-    config = read_config_json()
-    log_enabled = config.log_enabled
-    font_size = config.font_size
-    gui_font_size = config.gui_font_size
-    full_screen = config.full_screen
-    seed = config.seed or (39577563 if save_data.highscore == 0 else None)
-    muted = config.muted
-    volume = config.volume
+#         screen.fill(colour)
+#         pygame.display.flip()
+#         clock.tick(50)
+#         await asyncio.sleep(0)
 
-    load_music(volume)
+pygame.init()
+pygame.display.set_caption(GAME_TITLE)
+load_icon()
+disable_mouse()
 
-    handlers = (
-        [logging.NullHandler()]
-        if not log_enabled
-        else [logging.FileHandler("mailgame.log")]
-    )
-    logging.basicConfig(
-        handlers=handlers, level=logging.INFO, format="%(asctime)s %(message)s"
-    )
+config = read_config_json()
+log_enabled = config.log_enabled
+font_size = config.font_size
+gui_font_size = config.gui_font_size
+full_screen = config.full_screen
+seed = config.seed or (39577563 if load_save_data().highscore == 0 else None)
+muted = config.muted
+volume = config.volume
 
-    flags = pygame.FULLSCREEN if full_screen else 0
-    screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=flags)
-    board = pygame.Surface(tuple(BOARD_SIZE))
-    clock = pygame.time.Clock()
+load_music(volume)
 
-    global gui_font, font, title_font
-    font = init_font(font_size)
-    gui_font = init_gui_font(gui_font_size)
-    title_font = init_gui_font(font_size=TITLE_FONT_SIZE)
+handlers = (
+    [logging.NullHandler()]
+    if not log_enabled
+    else [logging.FileHandler("mailgame.log")]
+)
+logging.basicConfig(
+    handlers=handlers, level=logging.INFO, format="%(asctime)s %(message)s"
+)
 
-    level_one_params = Params(
-        amount=Stat(30, 3, 25),
-        throughput=Stat(4, 0.8, 1.5),
-        connections_per_node=Stat(2, 1, 1),
-        node_offset=Stat(0, 10),
-        max_connection_length=350,
-        player_speed=10,
-        mail_spawn_factor=0.005,
-        initial_mail=5,
-        combo_factor=2,
-        combo_factor_decrease_per_tick=-0.0001,
-        combo_factor_decrease_delta_per_tick=-0.0000001,
-        level=Level.ONE,
-        mail_size_decay=0.003,  # per tick
-        # mail_size_decay=0.03,  # per tick
-    )
-    params = level_one_params
+screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=(pygame.FULLSCREEN if full_screen else 0))
+board = pygame.Surface(tuple(BOARD_SIZE))
+clock = pygame.time.Clock()
 
-    logging.info("Save data: %s", load_save_data())
+font = init_font(font_size)
+gui_font = init_gui_font(gui_font_size)
+title_font = init_gui_font(font_size=TITLE_FONT_SIZE)
 
-    title_animation = init_title_animation()
+level_one_params = Params(
+    amount=Stat(30, 3, 25),
+    throughput=Stat(4, 0.8, 1.5),
+    connections_per_node=Stat(2, 1, 1),
+    node_offset=Stat(0, 10),
+    max_connection_length=350,
+    player_speed=10,
+    mail_spawn_factor=0.005,
+    initial_mail=5,
+    combo_factor=2,
+    combo_factor_decrease_per_tick=-0.0001,
+    combo_factor_decrease_delta_per_tick=-0.0000001,
+    level=Level.ONE,
+    mail_size_decay=0.003,  # per tick
+    # mail_size_decay=0.03,  # per tick
+)
+params = level_one_params
+
+logging.info("Save data: %s", load_save_data())
+
+title_animation = init_title_animation()
+
+async def main():
+    global full_screen, screen, muted
     game: Optional[Game] = None
+    # game = init_game(params, seed=seed if not game else None)
     # game = init_game(params, seed)
     terminated = False
     saved = False
@@ -1297,8 +1320,7 @@ def main():
                     terminated = True
                 if event.key == pygame.K_f:
                     full_screen = not full_screen
-                    flags = pygame.FULLSCREEN if full_screen else 0
-                    screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=flags)
+                    screen = pygame.display.set_mode(tuple(SCREEN_SIZE), flags=(pygame.FULLSCREEN if full_screen else 0))
                 if game is not None and game.player.reached_target and not game.over:
                     if event.key == pygame.K_1:
                         game.player.set_target_connection(0)
@@ -1329,6 +1351,7 @@ def main():
             render_menu(screen, title_animation, dummy_game)
             pygame.display.flip()
             clock.tick(FPS)
+            await asyncio.sleep(0)
             continue
 
         for entity in itertools.chain(game.entities, game.gui_entities):
@@ -1344,6 +1367,7 @@ def main():
         board.fill((12, 12, 12))
         for entity in game.entities:
             entity.render(board)
+        # game.player.render(board)
         for entity in game.gui_entities:
             entity.render(screen)
         if game.over:
@@ -1371,9 +1395,9 @@ def main():
 
         pygame.display.flip()
         clock.tick(FPS)
+        await asyncio.sleep(0)
 
     pygame.display.quit()
 
 
-if __name__ == "__main__":
-    main()
+asyncio.run(main())

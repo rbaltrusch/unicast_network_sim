@@ -1315,6 +1315,11 @@ async def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 terminated = True
+            if event.type == pygame.FINGERDOWN:
+                if game is None:
+                    game = init_game(params, seed=seed if not game else None)
+                else:
+                    game.player.set_target_connection(random.randint(0, 3))
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     terminated = True

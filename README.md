@@ -1,6 +1,6 @@
 # Unicast Network Simulator
 
-This is my entry for the Ludum Dare 53 game jam, to be completed in 72h as an entry for "The Jam".
+This is my entry for the Ludum Dare 53 game jam, completed as an entry for the 48h category "The Compo".
 
 ![Gif of gameplay](src/media/gameplay.gif)
 
